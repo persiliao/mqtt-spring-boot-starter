@@ -8,7 +8,6 @@ import io.github.persiliao.mqtt.annotation.MqttMessageHandler;
 import io.github.persiliao.mqtt.autoconfigure.BeanConstants;
 import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties;
 import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties.Mode;
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -65,8 +64,12 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
     private final Map<String, HandlerStatistics> handlerStatistics = new ConcurrentHashMap<>();
     private final Map<String, List<Class<?>>> handlerGroups = new ConcurrentHashMap<>();
 
-    // Dedicated executor for async (off-MQTT-thread) message processing
-    private ExecutorService asyncExecutor;
+    // Dedicated executor for async (off-MQTT-thread) message processing.
+    // Initialized lazily on first use (see getAsyncExecutor) so that the
+    // MqttProperties bean is NOT pulled in during this BeanPostProcessor's own
+    // creation, which would instantiate it before the ConfigurationProperties
+    // binding post-processor has registered and silently leave config unbound.
+    private volatile ExecutorService asyncExecutor;
 
     // Configuration constants
     private static final int MAX_SUBSCRIPTION_RETRIES = 3;
@@ -98,8 +101,42 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
      * sensible default. The executor uses a daemon thread factory and a
      * CallerRunsPolicy as backpressure so messages are never silently dropped.
      */
-    @PostConstruct
-    public void initAsyncExecutor() {
+    /**
+     * Returns the async executor, creating it on first access.
+     * <p>
+     * Initialization is deliberately deferred until the first message is
+     * dispatched (runtime, after the application context is fully refreshed)
+     * rather than performed in a {@code @PostConstruct}. Performing it eagerly
+     * would force the {@code MqttProperties} bean to be instantiated while this
+     * {@link BeanPostProcessor} is itself being created — before the
+     * {@code ConfigurationPropertiesBindingPostProcessor} has registered — which
+     * leaves the {@code @ConfigurationProperties} binding unapplied and silently
+     * drops external configuration.
+     *
+     * @return the async executor, or {@code null} if it could not be created
+     */
+    private ExecutorService getAsyncExecutor() {
+        ExecutorService executor = asyncExecutor;
+        if (executor == null) {
+            synchronized (this) {
+                executor = asyncExecutor;
+                if (executor == null) {
+                    asyncExecutor = executor = createAsyncExecutor();
+                }
+            }
+        }
+        return executor;
+    }
+
+    /**
+     * Builds the dedicated async executor used to process messages off the
+     * MQTT client thread when a handler is declared with async = true.
+     * <p>
+     * Pool sizing is configurable via {@code mqtt.async.*}; a value of 0 uses a
+     * sensible default. The executor uses a daemon thread factory and a
+     * CallerRunsPolicy as backpressure so messages are never silently dropped.
+     */
+    private ExecutorService createAsyncExecutor() {
         MqttProperties.AsyncConfig cfg = null;
         MqttProperties props = getMqttProperties();
         if (props != null && props.getAsync() != null) {
@@ -119,8 +156,8 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
 
-        this.asyncExecutor = executor.getThreadPoolExecutor();
         log.info("Initialized MQTT async message executor: core={}, max={}, queue={}", core, max, queue);
+        return executor.getThreadPoolExecutor();
     }
 
     /**
@@ -1248,11 +1285,16 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
      * @param statistics Statistics tracker
      */
     private void dispatch(Mqtt5Publish publish, SubscriptionContext context, HandlerStatistics statistics) {
-        if (context.getAnnotation().async() && asyncExecutor != null) {
-            asyncExecutor.submit(() -> safeRun(publish, context, statistics));
-        } else {
-            handleMessageCore(publish, context, statistics);
+        if (context.getAnnotation().async()) {
+            ExecutorService executor = getAsyncExecutor();
+            if (executor != null) {
+                executor.submit(() -> safeRun(publish, context, statistics));
+                return;
+            }
+            // Executor unavailable (e.g. properties not bound) — fall back to
+            // synchronous processing on the MQTT thread rather than dropping.
         }
+        handleMessageCore(publish, context, statistics);
     }
 
     /**
