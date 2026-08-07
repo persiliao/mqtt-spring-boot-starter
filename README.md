@@ -12,7 +12,7 @@ A feature-rich, enterprise-grade MQTT client Spring Boot Starter that supports a
 - 🚀 **Out-of-the-box** - Zero configuration setup with Spring Boot auto-configuration
 - 🔧 **Multiple Modes** - Supports both single-server and multi-server modes
 - 📡 **Declarative Programming** - Annotation-based message handlers, no manual subscription needed
-- 🛡️ **High Reliability** - Built-in circuit breaker, message deduplication, and automatic reconnection
+- 🛡️ **High Reliability** - Built-in message deduplication and automatic reconnection
 - 📊 **Monitoring & Statistics** - Comprehensive message processing statistics and performance monitoring
 - 🔄 **Ordered Processing** - Supports ordered message processing by topic or client
 - 🎯 **Smart Routing** - Supports wildcard topics and automatic parameter resolution
@@ -200,8 +200,6 @@ public class SensorHandler {
     async = true,
     retain = true,
     deduplicate = true,
-    circuitBreaker = true,
-    circuitBreakerThreshold = 30.0,
     ordering = MqttMessageHandler.Ordering.PER_TOPIC,
     validation = true,
     maxPayloadSize = 1024 * 1024,  // 1MB
@@ -306,7 +304,6 @@ public class MqttStatsController {
 │       MqttMessageHandlerProcessor              │
 │  ├─ SubscriptionContext  (Subscription State)  │
 │  ├─ EnhancedHandlerMethod (Enhanced Processing)│
-│  ├─ CircuitBreaker       (Circuit Breaker)     │
 │  ├─ HandlerStatistics    (Statistics)          │
 │  └─ LimitedSizeSet       (Deduplication)       │
 └─────────────────────────────────────────────────┘
@@ -319,17 +316,13 @@ public class MqttStatsController {
    ↓
 2. Check for duplicate messages (if deduplication enabled)
    ↓
-3. Check circuit breaker status (if circuit breaker enabled)
+3. Validate message (if validation enabled)
    ↓
-4. Validate message (if validation enabled)
+4. Auto-deserialize (if enabled)
    ↓
-5. Auto-deserialize (if enabled)
+5. Invoke handler method
    ↓
-6. Invoke handler method
-   ↓
-7. Update statistics
-   ↓
-8. Update circuit breaker status
+6. Update statistics
 ```
 
 ## 🔍 Troubleshooting
@@ -354,11 +347,20 @@ mqtt:
 
 **3. Performance Issues**
 ```java
-// Enable async processing
-@MqttMessageHandler(async = true, maxConcurrentMessages = 10)
+// Process messages off the MQTT client thread on the internal async pool (recommended)
+@MqttMessageHandler(async = true)
 
-// Adjust ordering configuration
-@MqttMessageHandler(ordering = MqttMessageHandler.Ordering.NONE)
+// For ordered processing, maxConcurrentMessages bounds the per-key backlog queue
+@MqttMessageHandler(ordering = MqttMessageHandler.Ordering.PER_TOPIC, maxConcurrentMessages = 10)
+```
+
+```yaml
+# Tune the async processing pool (optional; sensible defaults are used when omitted)
+mqtt:
+  async:
+    core-pool-size: 4      # 0 = available processors
+    max-pool-size: 8       # 0 = available processors * 2
+    queue-capacity: 1024   # 0 = 1024
 ```
 
 ### Debug Logging
@@ -378,7 +380,6 @@ The starter provides the following monitoring metrics:
 - Message processing success rate
 - Average processing time
 - Throughput (messages/second)
-- Circuit breaker status
 - Duplicate message count
 
 ## 🔄 Upgrade Guide

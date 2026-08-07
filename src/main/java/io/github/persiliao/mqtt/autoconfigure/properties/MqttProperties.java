@@ -4,8 +4,6 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
@@ -78,6 +76,13 @@ public class MqttProperties {
     private MultiServerConfig multiServer;
 
     /**
+     * Configuration for the asynchronous message-processing executor.
+     * Used when a handler is declared with async = true (the default).
+     */
+    @NestedConfigurationProperty
+    private AsyncConfig async = new AsyncConfig();
+
+    /**
      * Immutable server configuration record
      */
     @Data
@@ -113,7 +118,7 @@ public class MqttProperties {
         private boolean cleanStart = false;
 
         @Min(value = 1, message = "Receive maximum must be at least 1")
-        private int receiveMaximum = 1;
+        private int receiveMaximum = 32;
 
         @Min(value = 1024, message = "Maximum packet size must be at least 1024 bytes")
         private int maximumPacketSize = RECOMMENDED_MAX_PACKET_SIZE;
@@ -303,6 +308,34 @@ public class MqttProperties {
                         servers=%s
                     }""".formatted(failFast, getServerCount(), servers.stream().map(ServerConfig::toString).collect(Collectors.joining(", ")));
         }
+    }
+
+    /**
+     * Configuration for the asynchronous message-processing thread pool.
+     * <p>
+     * Messages are processed off the MQTT client thread on this executor when a
+     * handler is declared with {@code async = true}. A value of 0 falls back to a
+     * sensible default so the starter works out of the box.
+     */
+    @Data
+    public static class AsyncConfig {
+        /**
+         * Core pool size of the async executor.
+         * 0 = fall back to the number of available processors.
+         */
+        private int corePoolSize = 0;
+
+        /**
+         * Maximum pool size of the async executor.
+         * 0 = fall back to (available processors * 2).
+         */
+        private int maxPoolSize = 0;
+
+        /**
+         * Bounded queue capacity before the executor's rejection policy applies.
+         * 0 = fall back to 1024.
+         */
+        private int queueCapacity = 0;
     }
 
     /**

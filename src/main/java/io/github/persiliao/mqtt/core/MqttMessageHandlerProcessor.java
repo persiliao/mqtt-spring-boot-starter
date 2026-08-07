@@ -8,6 +8,7 @@ import io.github.persiliao.mqtt.annotation.MqttMessageHandler;
 import io.github.persiliao.mqtt.autoconfigure.BeanConstants;
 import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties;
 import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties.Mode;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -21,7 +22,6 @@ import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.core.annotation.AnnotationUtils;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
@@ -30,6 +30,8 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -43,7 +45,6 @@ import java.util.stream.Collectors;
  * It supports all the enhanced features defined in the @MqttMessageHandler annotation, including:
  * - Automatic topic subscription
  * - Message validation and deserialization
- * - Circuit breaker pattern
  * - Ordered message processing
  * - Statistics collection
  * - Deduplication
@@ -60,19 +61,21 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
     private final Map<String, SubscriptionContext> subscriptionContexts = new ConcurrentHashMap<>();
     private final Map<Class<?>, List<EnhancedHandlerMethod>> handlerMethodCache = new ConcurrentHashMap<>();
     private final Map<String, ExecutorService> orderedExecutors = new ConcurrentHashMap<>();
-    private final Map<String, CircuitBreaker> circuitBreakers = new ConcurrentHashMap<>();
     private final Map<String, LimitedSizeSet<Integer>> processedMessages = new ConcurrentHashMap<>();
     private final Map<String, HandlerStatistics> handlerStatistics = new ConcurrentHashMap<>();
     private final Map<String, List<Class<?>>> handlerGroups = new ConcurrentHashMap<>();
+
+    // Dedicated executor for async (off-MQTT-thread) message processing
+    private ExecutorService asyncExecutor;
 
     // Configuration constants
     private static final int MAX_SUBSCRIPTION_RETRIES = 3;
     private static final long SUBSCRIPTION_RETRY_DELAY_MS = 2000;
     private static final int DEFAULT_MAX_CONCURRENT_MESSAGES = Runtime.getRuntime().availableProcessors() * 2;
     private static final int MAX_PROCESSED_MESSAGES_CACHE = 1000;
-    private static final double CIRCUIT_BREAKER_ERROR_THRESHOLD = 50.0;
-    private static final long CIRCUIT_BREAKER_TIMEOUT_MS = 5000;
-    private static final int CIRCUIT_BREAKER_MIN_REQUESTS = 5;
+    private static final int DEFAULT_ASYNC_CORE_POOL = Runtime.getRuntime().availableProcessors();
+    private static final int DEFAULT_ASYNC_MAX_POOL = Runtime.getRuntime().availableProcessors() * 2;
+    private static final int DEFAULT_ASYNC_QUEUE_CAPACITY = 1024;
 
     @Override
     public void setApplicationContext(@NotNull ApplicationContext applicationContext) throws BeansException {
@@ -85,6 +88,39 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
 
     private MqttProperties getMqttProperties() {
         return getBeanSafely(MqttProperties.class);
+    }
+
+    /**
+     * Builds the dedicated async executor used to process messages off the
+     * MQTT client thread when a handler is declared with async = true.
+     * <p>
+     * Pool sizing is configurable via {@code mqtt.async.*}; a value of 0 uses a
+     * sensible default. The executor uses a daemon thread factory and a
+     * CallerRunsPolicy as backpressure so messages are never silently dropped.
+     */
+    @PostConstruct
+    public void initAsyncExecutor() {
+        MqttProperties.AsyncConfig cfg = null;
+        MqttProperties props = getMqttProperties();
+        if (props != null && props.getAsync() != null) {
+            cfg = props.getAsync();
+        }
+
+        int core = (cfg != null && cfg.getCorePoolSize() > 0) ? cfg.getCorePoolSize() : DEFAULT_ASYNC_CORE_POOL;
+        int max = (cfg != null && cfg.getMaxPoolSize() > 0) ? cfg.getMaxPoolSize() : DEFAULT_ASYNC_MAX_POOL;
+        int queue = (cfg != null && cfg.getQueueCapacity() > 0) ? cfg.getQueueCapacity() : DEFAULT_ASYNC_QUEUE_CAPACITY;
+
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(core);
+        executor.setMaxPoolSize(max);
+        executor.setQueueCapacity(queue);
+        executor.setThreadNamePrefix("mqtt-async-");
+        executor.setThreadFactory(new DaemonThreadFactory("mqtt-async-"));
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+
+        this.asyncExecutor = executor.getThreadPoolExecutor();
+        log.info("Initialized MQTT async message executor: core={}, max={}, queue={}", core, max, queue);
     }
 
     /**
@@ -469,174 +505,6 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
              * @return Resolved parameter value
              */
             Object resolve(Mqtt5Publish publish, String serverId, EnhancedHandlerMethod handler);
-        }
-    }
-
-    /**
-     * Circuit breaker implementation for fault tolerance
-     */
-    @Data
-    @AllArgsConstructor
-    @Builder
-    private static class CircuitBreaker {
-        /**
-         * Circuit breaker state
-         */
-        @Builder.Default
-        private State state = State.CLOSED;
-
-        /**
-         * Number of recent failures
-         */
-        @Builder.Default
-        private AtomicInteger failureCount = new AtomicInteger(0);
-
-        /**
-         * Number of recent successes
-         */
-        @Builder.Default
-        private AtomicInteger successCount = new AtomicInteger(0);
-
-        /**
-         * Time when circuit was opened
-         */
-        @Builder.Default
-        private long openedAt = 0;
-
-        /**
-         * Error threshold percentage
-         */
-        private double errorThreshold;
-
-        /**
-         * Timeout before attempting to close circuit
-         */
-        private long timeoutMs;
-
-        /**
-         * Minimum requests before calculating error rate
-         */
-        private int minRequests;
-
-        /**
-         * Circuit breaker states
-         */
-        enum State {
-            /**
-             * Circuit is closed, requests are allowed
-             */
-            CLOSED,
-
-            /**
-             * Circuit is open, requests are blocked
-             */
-            OPEN,
-
-            /**
-             * Circuit is half-open, testing if service recovered
-             */
-            HALF_OPEN
-        }
-
-        /**
-         * Checks if circuit breaker allows the request
-         *
-         * @return true if request is allowed, false otherwise
-         */
-        public boolean allowRequest() {
-            switch (state) {
-                case CLOSED, HALF_OPEN:
-                    return true;
-                case OPEN:
-                    if (System.currentTimeMillis() - openedAt >= timeoutMs) {
-                        synchronized (this) {
-                            if (state == State.OPEN) { // 双重检查
-                                state = State.HALF_OPEN;
-                                resetCounters(); // 重置计数器进入半开状态
-                            }
-                        }
-                        return true;
-                    }
-                    return false;
-                default:
-                    return false;
-            }
-        }
-
-        /**
-         * Records a successful request
-         */
-        public void recordSuccess() {
-            synchronized (this) {
-                successCount.incrementAndGet();
-
-                if (state == State.HALF_OPEN) {
-                    if (successCount.get() >= minRequests) {
-                        reset();
-                    }
-                } else {
-                    recalculateErrorRate();
-                }
-            }
-        }
-
-        /**
-         * Records a failed request
-         */
-        public void recordFailure() {
-            synchronized (this) {
-                failureCount.incrementAndGet();
-
-                if (state == State.HALF_OPEN) {
-                    state = State.OPEN;
-                    openedAt = System.currentTimeMillis();
-                } else {
-                    recalculateErrorRate();
-                }
-            }
-        }
-
-        /**
-         * Recalculates error rate and transitions state if needed
-         */
-        private void recalculateErrorRate() {
-            int total = failureCount.get() + successCount.get();
-            if (total >= minRequests) {
-                double errorRate = (double) failureCount.get() / total * 100;
-                if (errorRate >= errorThreshold) {
-                    state = State.OPEN;
-                    openedAt = System.currentTimeMillis();
-                }
-            }
-        }
-
-        /**
-         * Resets circuit breaker to closed state
-         */
-        private void reset() {
-            synchronized (this) {
-                state = State.CLOSED;
-                resetCounters();
-                openedAt = 0;
-            }
-        }
-
-        /**
-         * Resets success and failure counters
-         */
-        private void resetCounters() {
-            successCount.set(0);
-            failureCount.set(0);
-        }
-
-        /**
-         * Gets current error rate percentage
-         *
-         * @return Error rate percentage
-         */
-        public double getErrorRate() {
-            int total = failureCount.get() + successCount.get();
-            return total > 0 ? (double) failureCount.get() / total * 100 : 0.0;
         }
     }
 
@@ -1206,17 +1074,6 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
                 }
             }
 
-            // Check circuit breaker
-            if (context.getAnnotation().circuitBreaker()) {
-                String circuitBreakerKey = context.getSubscriptionKey() + "-circuit-breaker";
-                CircuitBreaker circuitBreaker = circuitBreakers.computeIfAbsent(circuitBreakerKey, k -> CircuitBreaker.builder().errorThreshold(context.getAnnotation().circuitBreakerThreshold()).timeoutMs(context.getAnnotation().circuitBreakerTimeout()).minRequests(CIRCUIT_BREAKER_MIN_REQUESTS).build());
-
-                if (!circuitBreaker.allowRequest()) {
-                    log.warn("Circuit breaker is OPEN, skipping message for topic {}", context.getTopic());
-                    return;
-                }
-            }
-
             // Get or create statistics tracker
             HandlerStatistics statistics = handlerStatistics.computeIfAbsent(context.getSubscriptionKey(), k -> HandlerStatistics.builder().build());
 
@@ -1305,15 +1162,13 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
             ExecutorService orderedExecutor = getOrderedExecutor(executorKey, context.getAnnotation());
 
             if (orderedExecutor != null) {
-                orderedExecutor.submit(() -> {
-                    try {
-                        handleMessageWithStatistics(publish, context, statistics);
-                    } catch (Exception e) {
-                        log.error("Error handling ordered message for topic {}: {}", publish.getTopic(), e.getMessage(), e);
-                    }
-                });
+                // A dedicated single-thread executor already runs the task off the
+                // MQTT thread while preserving per-key order; no async re-dispatch.
+                orderedExecutor.submit(() -> safeRun(publish, context, statistics));
             } else {
-                handleMessageWithStatistics(publish, context, statistics);
+                // Ordering requested but no concurrency limit: process inline on
+                // the calling thread so order is still preserved on a single thread.
+                handleMessageCore(publish, context, statistics);
             }
         } catch (Exception e) {
             log.error("Error in ordered message processing for topic {}: {}", publish.getTopic(), e.getMessage(), e);
@@ -1328,11 +1183,7 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
      * @param statistics Statistics tracker
      */
     private void handleMessageWithoutOrdering(Mqtt5Publish publish, SubscriptionContext context, HandlerStatistics statistics) {
-        if (context.getAnnotation().async()) {
-            handleMessageAsync(publish, context, statistics);
-        } else {
-            handleMessageSync(publish, context, statistics);
-        }
+        dispatch(publish, context, statistics);
     }
 
     /**
@@ -1385,11 +1236,37 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
      * @param context    Subscription context
      * @param statistics Statistics tracker
      */
-    private void handleMessageWithStatistics(Mqtt5Publish publish, SubscriptionContext context, HandlerStatistics statistics) {
-        if (context.getAnnotation().async()) {
-            handleMessageAsync(publish, context, statistics);
+    /**
+     * Central dispatcher that honors the {@code async} flag using a real executor.
+     * <p>
+     * When async is enabled, the handler runs off the MQTT client thread on the
+     * dedicated async executor. Otherwise it runs synchronously on the calling
+     * thread (the documented behavior for async = false).
+     *
+     * @param publish    MQTT publish message
+     * @param context    Subscription context
+     * @param statistics Statistics tracker
+     */
+    private void dispatch(Mqtt5Publish publish, SubscriptionContext context, HandlerStatistics statistics) {
+        if (context.getAnnotation().async() && asyncExecutor != null) {
+            asyncExecutor.submit(() -> safeRun(publish, context, statistics));
         } else {
-            handleMessageSync(publish, context, statistics);
+            handleMessageCore(publish, context, statistics);
+        }
+    }
+
+    /**
+     * Wraps core handling with exception logging for execution on a pool thread.
+     *
+     * @param publish    MQTT publish message
+     * @param context    Subscription context
+     * @param statistics Statistics tracker
+     */
+    private void safeRun(Mqtt5Publish publish, SubscriptionContext context, HandlerStatistics statistics) {
+        try {
+            handleMessageCore(publish, context, statistics);
+        } catch (Exception e) {
+            log.error("Error handling async message for topic {} on server {}: {}", publish.getTopic(), context.getServerId(), e.getMessage(), e);
         }
     }
 
@@ -1439,29 +1316,6 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
     });
 
     /**
-     * Handles message asynchronously
-     *
-     * @param publish    MQTT publish message
-     * @param context    Subscription context
-     * @param statistics Statistics tracker
-     */
-    @Async
-    protected void handleMessageAsync(Mqtt5Publish publish, SubscriptionContext context, HandlerStatistics statistics) {
-        handleMessageCore(publish, context, statistics);
-    }
-
-    /**
-     * Handles message synchronously
-     *
-     * @param publish    MQTT publish message
-     * @param context    Subscription context
-     * @param statistics Statistics tracker
-     */
-    private void handleMessageSync(Mqtt5Publish publish, SubscriptionContext context, HandlerStatistics statistics) {
-        handleMessageCore(publish, context, statistics);
-    }
-
-    /**
      * Core message handling logic
      *
      * @param publish    MQTT publish message
@@ -1506,19 +1360,6 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
                 log.warn("No suitable handler method found for topic {} on server {} for bean: {}", context.getTopic(), context.getServerId(), context.getHandlerBean().getClass().getName());
             }
 
-            // Update circuit breaker
-            if (context.getAnnotation().circuitBreaker()) {
-                String circuitBreakerKey = context.getSubscriptionKey() + "-circuit-breaker";
-                CircuitBreaker circuitBreaker = circuitBreakers.get(circuitBreakerKey);
-                if (circuitBreaker != null) {
-                    if (success) {
-                        circuitBreaker.recordSuccess();
-                    } else {
-                        circuitBreaker.recordFailure();
-                    }
-                }
-            }
-
         } catch (Exception e) {
             long processingTime = System.nanoTime() - startTime;
             statistics.recordFailure();
@@ -1552,27 +1393,6 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
         return stats;
     }
 
-    /**
-     * Gets circuit breaker status for a subscription
-     *
-     * @param subscriptionKey Subscription key
-     * @return Map of circuit breaker status
-     */
-    public Map<String, Object> getCircuitBreakerStatus(String subscriptionKey) {
-        Map<String, Object> status = new HashMap<>();
-
-        CircuitBreaker circuitBreaker = circuitBreakers.get(subscriptionKey);
-        if (circuitBreaker != null) {
-            status.put("state", circuitBreaker.getState().name());
-            status.put("errorRate", circuitBreaker.getErrorRate());
-            status.put("failureCount", circuitBreaker.getFailureCount().get());
-            status.put("successCount", circuitBreaker.getSuccessCount().get());
-            status.put("openedAt", circuitBreaker.getOpenedAt());
-        }
-
-        return status;
-    }
-
     @PreDestroy
     public void destroy() {
         log.info("Cleaning up MQTT message handler processor resources...");
@@ -1588,6 +1408,20 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
             Thread.currentThread().interrupt();
         }
 
+        // 关闭 async executor
+        if (asyncExecutor != null) {
+            asyncExecutor.shutdown();
+            try {
+                if (!asyncExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    asyncExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                asyncExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            asyncExecutor = null;
+        }
+
         // 关闭 ordered executors
         for (ExecutorService executor : orderedExecutors.values()) {
             executor.shutdown();
@@ -1597,12 +1431,30 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
         // 清理其他资源
         subscriptionContexts.clear();
         handlerMethodCache.clear();
-        circuitBreakers.clear();
         processedMessages.clear();
         handlerStatistics.clear();
         handlerGroups.clear();
 
         log.info("MQTT message handler processor cleanup completed.");
+    }
+
+    /**
+     * Daemon thread factory for MQTT executors so worker threads never block JVM exit.
+     */
+    private static class DaemonThreadFactory implements ThreadFactory {
+        private final String prefix;
+        private final AtomicInteger counter = new AtomicInteger(1);
+
+        DaemonThreadFactory(String prefix) {
+            this.prefix = prefix;
+        }
+
+        @Override
+        public Thread newThread(@NotNull Runnable r) {
+            Thread t = new Thread(r, prefix + counter.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        }
     }
 
 }

@@ -92,11 +92,12 @@ public @interface MqttMessageHandler {
     /**
      * Enable asynchronous message processing
      * <p>
-     * If true, messages will be processed asynchronously using Spring's @Async.
-     * The handler method should be thread-safe when async is enabled.
+     * If true, messages are dispatched to a dedicated internal thread pool
+     * (see mqtt.async.*) so the MQTT client's network thread is never blocked
+     * by handler logic. The handler method should be thread-safe when async is enabled.
      * <p>
-     * If false, messages will be processed synchronously in the MQTT client's thread.
-     * This may block other messages if processing takes too long.
+     * If false, messages are processed synchronously on the MQTT client's callback
+     * thread. Long-running handlers may then stall the connection and cause backpressure.
      * <p>
      * Default: true
      *
@@ -172,9 +173,10 @@ public @interface MqttMessageHandler {
     /**
      * Maximum number of concurrent messages to process
      * <p>
-     * Only applicable when async = true.
-     * Limits the number of concurrent message processing tasks.
-     * 0 = unlimited (use default thread pool settings)
+     * Only applicable when {@link #ordering()} is enabled (ordering != NONE).
+     * Controls the bounded backlog queue capacity of the per-key ordered executor
+     * that serializes messages for the same topic/client.
+     * 0 = unlimited queue (use the ordered executor without a backlog cap)
      * <p>
      * Default: 0
      *
@@ -343,42 +345,6 @@ public @interface MqttMessageHandler {
      * @return true to enable statistics collection
      */
     boolean statistics() default false;
-
-    /**
-     * Circuit breaker configuration
-     * <p>
-     * If true, enable circuit breaker pattern for this handler.
-     * The handler will stop processing messages if error rate exceeds threshold.
-     * <p>
-     * Default: false
-     *
-     * @return true to enable circuit breaker
-     */
-    boolean circuitBreaker() default false;
-
-    /**
-     * Circuit breaker error threshold percentage
-     * <p>
-     * The error percentage that triggers circuit breaker open state.
-     * Only used when circuitBreaker = true.
-     * <p>
-     * Default: 50.0
-     *
-     * @return error threshold percentage
-     */
-    double circuitBreakerThreshold() default 50.0;
-
-    /**
-     * Circuit breaker timeout in milliseconds
-     * <p>
-     * How long to keep circuit breaker open before attempting to close.
-     * Only used when circuitBreaker = true.
-     * <p>
-     * Default: 5000
-     *
-     * @return circuit breaker timeout
-     */
-    long circuitBreakerTimeout() default 5000;
 
     /**
      * Message handler version
