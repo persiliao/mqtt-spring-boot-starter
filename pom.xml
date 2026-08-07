@@ -13,7 +13,7 @@
 
     <groupId>io.github.persiliao</groupId>
     <artifactId>mqtt-spring-boot-starter</artifactId>
-    <version>3.0.1</version>
+    <version>3.1.0</version>
 
     <name>Mqtt Spring Boot Starter</name>
     <description>Feature-rich, enterprise-grade MQTT client Spring Boot Starter with auto-configuration</description>
