@@ -1,14 +1,9 @@
-package io.github.persiliao.mqtt.core;
+package io.github.persiliao.mqtt;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hivemq.client.mqtt.datatypes.MqttQos;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
-import io.github.persiliao.mqtt.annotation.MqttMessageHandler;
-import io.github.persiliao.mqtt.autoconfigure.BeanConstants;
-import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties;
-import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties.Mode;
-import jakarta.annotation.PreDestroy;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.beans.BeansException;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
@@ -52,7 +48,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @RequiredArgsConstructor
-public class MqttMessageHandlerProcessor implements BeanPostProcessor, ApplicationContextAware {
+public class MqttMessageHandlerProcessor implements BeanPostProcessor, ApplicationContextAware, DisposableBean {
 
     // Dependencies
     private ApplicationContext applicationContext;
@@ -678,7 +674,7 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
         /**
          * Internal storage
          */
-        private final Set<T> storage = new LinkedHashSet<>() {
+        private final Set<T> storage = new LinkedHashSet<T>() {
 
             private boolean removeEldestEntry(Map.Entry<T, Boolean> eldest) {
                 return size() > maxSize;
@@ -864,7 +860,7 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
         List<String> serverIds = new ArrayList<>();
 
         try {
-            if (getMqttProperties().getMode() == Mode.SINGLE) {
+            if (getMqttProperties().getMode() == MqttProperties.Mode.SINGLE) {
                 Mqtt5AsyncClient singleMqttClient = getBeanSafely(BeanConstants.SINGLE_MQTT_CLIENT, Mqtt5AsyncClient.class);
                 if (singleMqttClient != null) {
                     serverIds.add("*");
@@ -892,15 +888,15 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
         List<Mqtt5AsyncClient> clients = new ArrayList<>();
 
         try {
-            Mode runMode = getMqttProperties().getMode();
-            if (Mode.SINGLE.equals(runMode)) {
+            MqttProperties.Mode runMode = getMqttProperties().getMode();
+            if (MqttProperties.Mode.SINGLE.equals(runMode)) {
                 // Single mode or default server
                 Mqtt5AsyncClient client = getBeanSafely(BeanConstants.SINGLE_MQTT_CLIENT, Mqtt5AsyncClient.class);
                 if (client != null) {
                     clients.add(client);
                 }
             }
-            if (Mode.MULTI.equals(runMode)) {
+            if (MqttProperties.Mode.MULTI.equals(runMode)) {
                 // noinspection unchecked
                 Map<String, Mqtt5AsyncClient> allClients = getBeanSafely(BeanConstants.MULTI_MQTT_CLIENTS, Map.class);
 
@@ -1435,7 +1431,7 @@ public class MqttMessageHandlerProcessor implements BeanPostProcessor, Applicati
         return stats;
     }
 
-    @PreDestroy
+    @Override
     public void destroy() {
         log.info("Cleaning up MQTT message handler processor resources...");
 

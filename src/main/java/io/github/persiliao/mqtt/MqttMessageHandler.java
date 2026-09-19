@@ -1,4 +1,4 @@
-package io.github.persiliao.mqtt.annotation;
+package io.github.persiliao.mqtt;
 
 import org.springframework.stereotype.Component;
 import org.springframework.core.annotation.AliasFor;
@@ -12,7 +12,7 @@ import java.lang.annotation.*;
  * It enables automatic subscription to specified MQTT topics and message processing.
  * <p>
  * The annotated class will be automatically discovered and registered by
- * {@link io.github.persiliao.mqtt.core.MqttMessageHandlerProcessor}.
+ * {@link MqttMessageHandlerProcessor}.
  * <p>
  * Usage examples:
  * 1. Simple handler:
@@ -50,7 +50,7 @@ import java.lang.annotation.*;
  * }
  * }
  *
- * @see io.github.persiliao.mqtt.core.MqttMessageHandlerProcessor
+ * @see MqttMessageHandlerProcessor
  * @since 1.0.0
  * @author YourName
  */

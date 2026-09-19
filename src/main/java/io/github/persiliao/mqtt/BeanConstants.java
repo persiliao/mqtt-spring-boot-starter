@@ -1,4 +1,4 @@
-package io.github.persiliao.mqtt.autoconfigure;
+package io.github.persiliao.mqtt;
 
 public interface BeanConstants {
 

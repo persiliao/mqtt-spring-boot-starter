@@ -1,3 +1,3 @@
 # src/main/resources/META-INF/spring.factories
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-io.github.persiliao.mqtt.autoconfigure.MqttAutoConfiguration
+io.github.persiliao.mqtt.MqttAutoConfiguration

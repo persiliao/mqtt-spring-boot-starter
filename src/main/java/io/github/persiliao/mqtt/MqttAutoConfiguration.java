@@ -1,4 +1,4 @@
-package io.github.persiliao.mqtt.autoconfigure;
+package io.github.persiliao.mqtt;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;
@@ -7,8 +7,6 @@ import com.hivemq.client.mqtt.mqtt5.Mqtt5ClientBuilder;
 import com.hivemq.client.mqtt.mqtt5.exceptions.Mqtt5ConnAckException;
 import com.hivemq.client.mqtt.mqtt5.message.auth.Mqtt5SimpleAuth;
 import com.hivemq.client.mqtt.mqtt5.message.connect.Mqtt5Connect;
-import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties;
-import io.github.persiliao.mqtt.core.MqttMessageHandlerProcessor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.BeanDefinition;
@@ -215,7 +213,8 @@ public class MqttAutoConfiguration {
         // @formatter:on
         client.connect(connectMessage).whenComplete((connAck, throwable) -> {
             if (throwable != null) {
-                if (throwable instanceof Mqtt5ConnAckException connAckEx) {
+                if (throwable instanceof Mqtt5ConnAckException) {
+                    Mqtt5ConnAckException connAckEx = (Mqtt5ConnAckException) throwable;
                     log.error("Failed to connect client [{}] to server {}: {}, reason code: {}", config.getClientId(), serverId, connAckEx.getMessage(), connAckEx.getMqttMessage().getReasonCode());
                 } else {
                     log.error("Failed to connect client [{}] to server {}: {}", config.getClientId(), serverId, throwable.getMessage(), throwable);
@@ -284,12 +283,17 @@ public class MqttAutoConfiguration {
             return 1883;
         }
 
-        return switch (scheme.toLowerCase()) {
-            case "ssl", "wss" -> 8883;
-            case "ws" -> 80;
-            case "tcp" -> 1883;
-            default -> 1883;
-        };
+        switch (scheme.toLowerCase()) {
+            case "ssl":
+            case "wss":
+                return 8883;
+            case "ws":
+                return 80;
+            case "tcp":
+                return 1883;
+            default:
+                return 1883;
+        }
     }
 
     /**
