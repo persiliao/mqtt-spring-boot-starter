@@ -35,13 +35,13 @@ A feature-rich, enterprise-grade MQTT client Spring Boot Starter that supports a
 <dependency>
     <groupId>io.github.persiliao</groupId>
     <artifactId>mqtt-spring-boot-starter</artifactId>
-    <version>3.0.0</version>
+    <version>2026.1.1</version>
 </dependency>
 ```
 
 **Gradle:**
 ```groovy
-implementation 'io.github.persiliao:mqtt-spring-boot-starter:3.0.0'
+implementation 'io.github.persiliao:mqtt-spring-boot-starter:2026.1.1'
 ```
 
 ### 2. Basic Configuration
