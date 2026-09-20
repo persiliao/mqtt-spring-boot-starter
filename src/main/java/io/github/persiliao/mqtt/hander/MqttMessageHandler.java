@@ -1,4 +1,4 @@
-package io.github.persiliao.mqtt;
+package io.github.persiliao.mqtt.hander;
 
 import org.springframework.stereotype.Component;
 import org.springframework.core.annotation.AliasFor;

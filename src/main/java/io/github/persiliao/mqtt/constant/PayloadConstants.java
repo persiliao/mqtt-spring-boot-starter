@@ -1,4 +1,4 @@
-package io.github.persiliao.mqtt;
+package io.github.persiliao.mqtt.constant;
 
 public interface PayloadConstants {
 

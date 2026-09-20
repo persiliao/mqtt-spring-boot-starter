@@ -1,4 +1,4 @@
-package io.github.persiliao.mqtt;
+package io.github.persiliao.mqtt.autoconfigure.properties;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
@@ -11,7 +11,7 @@ import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
-import static io.github.persiliao.mqtt.PayloadConstants.RECOMMENDED_MAX_PACKET_SIZE;
+import static io.github.persiliao.mqtt.constant.PayloadConstants.RECOMMENDED_MAX_PACKET_SIZE;
 
 /**
  * MQTT Auto-configuration Properties

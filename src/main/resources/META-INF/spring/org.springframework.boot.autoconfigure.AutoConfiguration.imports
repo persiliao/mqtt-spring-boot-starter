@@ -1,1 +1,1 @@
-io.github.persiliao.mqtt.MqttAutoConfiguration
+io.github.persiliao.mqtt.autoconfigure.MqttAutoConfiguration

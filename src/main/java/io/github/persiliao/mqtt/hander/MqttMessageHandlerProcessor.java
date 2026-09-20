@@ -1,9 +1,11 @@
-package io.github.persiliao.mqtt;
+package io.github.persiliao.mqtt.hander;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hivemq.client.mqtt.datatypes.MqttQos;
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;
 import com.hivemq.client.mqtt.mqtt5.message.publish.Mqtt5Publish;
+import io.github.persiliao.mqtt.autoconfigure.properties.MqttProperties;
+import io.github.persiliao.mqtt.constant.BeanConstants;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
