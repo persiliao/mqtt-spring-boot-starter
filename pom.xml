@@ -49,7 +49,7 @@
           overridable via ${spring-boot.version} inherited from the parent), so the
           same artifact serves both Spring Boot 2.x and 3.x.
         -->
-        <maven.compiler.release>8</maven.compiler.release>
+        <maven.compiler.release>17</maven.compiler.release>
         <hivemq.version>1.3.13</hivemq.version>
         <jetbrains.annotations.version>13.0</jetbrains.annotations.version>
     </properties>
