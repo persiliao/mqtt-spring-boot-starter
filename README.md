@@ -1,8 +1,8 @@
 # MQTT Spring Boot Starter
 
 [![](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![](https://img.shields.io/badge/Spring%20Boot-2.x%20%7C%203.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
-[![](https://img.shields.io/badge/Java-8+-orange.svg)](https://www.oracle.com/java)
+[![](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.persiliao/mqtt-spring-boot-starter.svg)](https://search.maven.org/artifact/io.github.persiliao/mqtt-spring-boot-starter)
 
 A feature-rich, enterprise-grade MQTT client Spring Boot Starter that supports automatic configuration, declarative message processing, and various enhanced features.
@@ -21,8 +21,8 @@ A feature-rich, enterprise-grade MQTT client Spring Boot Starter that supports a
 
 ## 📦 Requirements
 
-- Java 8+ (compiled to Java 8 bytecode, class file version 52)
-- Spring Boot 2.x or 3.x (Spring Boot version is inherited from the parent and can be overridden via `${spring-boot.version}`)
+- Java 17+ (compiled to Java 17 bytecode, class file version 61)
+- Spring Boot 3.x or higher (Spring Boot version is inherited from the parent and can be overridden via `${spring-boot.version}`; values below 3.x are rejected by the build)
 - Maven 3.6+ or Gradle 7.x
 - HiveMQ MQTT Client 5.x
 

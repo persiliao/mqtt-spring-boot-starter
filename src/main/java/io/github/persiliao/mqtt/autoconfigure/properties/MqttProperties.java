@@ -20,9 +20,8 @@ import static io.github.persiliao.mqtt.constant.PayloadConstants.RECOMMENDED_MAX
  * It supports both single server and multiple server modes with comprehensive configuration options.
  * <p>
  * Validation is performed through the explicit {@link #validate()} and
- * {@link ServerConfig#isValid()} methods rather than the Bean Validation API, so that this
- * starter remains independent of the {@code jakarta.*} / {@code javax.*} namespace split
- * and is therefore compatible with both Spring Boot 2.x and 3.x.
+ * {@link ServerConfig#isValid()} methods rather than the Bean Validation API,
+ * keeping the starter free of any {@code jakarta.validation} dependency.
  * <p>
  * Configuration prefix: "mqtt"
  * Example: mqtt.enabled=true, mqtt.mode=SINGLE, mqtt.single-server.server-uri=tcp://localhost:1883
