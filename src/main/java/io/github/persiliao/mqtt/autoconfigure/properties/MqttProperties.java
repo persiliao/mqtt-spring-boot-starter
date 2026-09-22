@@ -1,420 +1,312 @@
 package io.github.persiliao.mqtt.autoconfigure.properties;
 
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.ToString;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.NestedConfigurationProperty;
 import org.springframework.util.StringUtils;
 
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.*;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
-
-import static io.github.persiliao.mqtt.constant.PayloadConstants.RECOMMENDED_MAX_PACKET_SIZE;
+import java.time.Duration;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /**
- * MQTT Auto-configuration Properties
- * <p>
- * This class defines all configuration properties for the MQTT client auto-configuration.
- * It supports both single server and multiple server modes with comprehensive configuration options.
- * <p>
- * Validation is performed through the explicit {@link #validate()} and
- * {@link ServerConfig#isValid()} methods rather than the Bean Validation API,
+ * Configuration properties for the MQTT auto-configuration.
+ *
+ * <p>Configuration prefix: {@code mqtt}. Example:
+ * <pre>
+ * mqtt:
+ *   mode: SINGLE
+ *   single-server:
+ *     server-uri: tcp://localhost:1883
+ *     client-id: my-app
+ * </pre>
+ *
+ * <p>Validation is performed explicitly through {@link #validate()} (called by
+ * the auto-configuration at startup) rather than via the Bean Validation API,
  * keeping the starter free of any {@code jakarta.validation} dependency.
- * <p>
- * Configuration prefix: "mqtt"
- * Example: mqtt.enabled=true, mqtt.mode=SINGLE, mqtt.single-server.server-uri=tcp://localhost:1883
+ *
+ * @since 3.0.0
  */
-@Data
+@Getter
+@Setter
 @ConfigurationProperties(prefix = "mqtt")
 public class MqttProperties {
 
     /**
-     * MQTT operation mode enumeration
+     * MQTT client operation mode.
      */
     public enum Mode {
-        SINGLE, MULTI
+        /** Connect to a single MQTT server ({@code mqtt.single-server.*}). */
+        SINGLE,
+        /** Connect to multiple MQTT servers ({@code mqtt.multi-server.servers}). */
+        MULTI
     }
 
     /**
-     * Enable or disable MQTT auto-configuration
-     * Default: true (enabled)
+     * Enables the MQTT auto-configuration.
+     * Default: {@code true}
      */
     private boolean enabled = true;
 
     /**
-     * MQTT client operation mode
-     * - SINGLE: Connect to a single MQTT server
-     * - MULTI: Connect to multiple MQTT servers
-     * Default: SINGLE
+     * Operation mode.
+     * Default: {@link Mode#SINGLE}
      */
     private Mode mode = Mode.SINGLE;
 
     /**
-     * Configuration for single server mode
-     * Used when mode = SINGLE
+     * Single server configuration, used when {@link #mode} is {@code SINGLE}.
      */
     @NestedConfigurationProperty
     private ServerConfig singleServer;
 
     /**
-     * Configuration for multiple servers mode
-     * Used when mode = MULTI
+     * Multiple server configuration, used when {@link #mode} is {@code MULTI}.
      */
     @NestedConfigurationProperty
     private MultiServerConfig multiServer;
 
     /**
-     * Configuration for the asynchronous message-processing executor.
-     * Used when a handler is declared with async = true (the default).
+     * Pool sizing for the async message-processing executor used by handlers
+     * declared with {@code async = true}.
      */
     @NestedConfigurationProperty
     private AsyncConfig async = new AsyncConfig();
 
     /**
-     * Immutable server configuration record
+     * Configuration of one MQTT server connection.
      */
-    @Data
+    @Getter
+    @Setter
+    @ToString(exclude = "password")
     public static class ServerConfig {
+
+        /**
+         * Logical id of this server. Required in {@code MULTI} mode (it is the
+         * key of the client map and the value passed to handlers as server id).
+         * Optional in {@code SINGLE} mode, defaults to {@code "default"}.
+         */
         private String id;
 
+        /**
+         * Broker address. Supported schemes: {@code tcp://} and {@code ssl://}
+         * (TLS). A missing scheme defaults to {@code tcp}.
+         * Examples: {@code tcp://localhost:1883}, {@code ssl://broker.example.com:8883}.
+         */
         private String serverUri;
 
+        /**
+         * MQTT client identifier. Must be unique per broker.
+         */
         private String clientId;
 
+        /**
+         * Username for MQTT authentication (used together with {@link #password}).
+         */
         private String username;
+
+        /**
+         * Password for MQTT authentication.
+         */
         private String password;
 
-        private int initialDelay = 1;
-
-        private int maxDelay = 30;
-
+        /**
+         * MQTT keep-alive interval in seconds (0–65535).
+         * Default: 60
+         */
         private int keepAlive = 60;
 
-        private int connectionTimeout = 10;
+        /**
+         * Session expiry interval in seconds (MQTT 5).
+         * Default: 3600
+         */
+        private long sessionExpiryInterval = 3600;
 
-        private int sessionExpiryInterval = 3600;
+        /**
+         * MQTT 5 "clean start" flag.
+         * Default: {@code false}
+         */
+        private boolean cleanStart;
 
+        /**
+         * Enables the client's built-in automatic reconnection with exponential
+         * backoff between {@link #initialDelay} and {@link #maxDelay}.
+         * Default: {@code true}
+         */
         private boolean automaticReconnect = true;
-        private boolean cleanStart = false;
 
+        /**
+         * Initial delay of the reconnection backoff.
+         * Default: 1s
+         */
+        private Duration initialDelay = Duration.ofSeconds(1);
+
+        /**
+         * Upper bound of the reconnection backoff.
+         * Default: 30s
+         */
+        private Duration maxDelay = Duration.ofSeconds(30);
+
+        /**
+         * MQTT 5 receive maximum (1–65535).
+         * Default: 32
+         */
         private int receiveMaximum = 32;
 
-        private int maximumPacketSize = RECOMMENDED_MAX_PACKET_SIZE;
+        /**
+         * MQTT 5 maximum packet size in bytes.
+         * Default: 8388608 (8 MiB)
+         */
+        private int maximumPacketSize = 8 * 1024 * 1024;
 
         /**
-         * Parse URI using Java's built-in URI class
+         * Returns the effective id of this server: the configured {@link #id}
+         * or {@code "default"} when it is not set.
+         *
+         * @return the server id
          */
-        public URI parseUri() {
-            try {
-                return new URI(serverUri);
-            } catch (URISyntaxException e) {
-                throw new IllegalArgumentException("Invalid MQTT URI: " + serverUri, e);
-            }
+        public String resolveId() {
+            return StringUtils.hasText(id) ? id.trim() : "default";
         }
 
         /**
-         * Returns the server host extracted from the URI
-         */
-        public String getHost() {
-            URI uri = parseUri();
-            String host = uri.getHost();
-            return host != null ? host : "localhost";
-        }
-
-        /**
-         * Returns the server port extracted from the URI
-         */
-        public int getPort() {
-            URI uri = parseUri();
-            int port = uri.getPort();
-
-            if (port > 0) {
-                return port;
-            }
-
-            // Return default port based on scheme
-            String scheme = uri.getScheme();
-            if (scheme == null) {
-                return 1883;
-            }
-            switch (scheme.toLowerCase()) {
-                case "ssl":
-                case "wss":
-                    return 8883;
-                case "ws":
-                    return 80;
-                case "tcp":
-                    return 1883;
-                default:
-                    return 1883;
-            }
-        }
-
-        /**
-         * Returns the protocol from the URI
-         */
-        public String getProtocol() {
-            URI uri = parseUri();
-            return uri.getScheme() != null ? uri.getScheme() : "tcp";
-        }
-
-        /**
-         * Validates if authentication is configured
+         * @return {@code true} when both username and password are set
          */
         public boolean hasAuthentication() {
             return StringUtils.hasText(username) && StringUtils.hasText(password);
         }
 
         /**
-         * Validates the configuration
+         * @return {@code true} when the mandatory fields (server uri and
+         *         client id) are present
          */
         public boolean isValid() {
-            return StringUtils.hasText(clientId) && StringUtils.hasText(serverUri);
-        }
-
-        /**
-         * Returns a string representation for logging
-         */
-        @Override
-        public String toString() {
-            return "ServerConfig{" +
-                    "id='" + (id != null ? id : "default") + "', " +
-                    "uri='" + serverUri + "', " +
-                    "clientId='" + clientId + "', " +
-                    "host='" + getHost() + ":" + getPort() + "', " +
-                    "protocol='" + getProtocol() + "'" +
-                    "}";
+            return StringUtils.hasText(serverUri) && StringUtils.hasText(clientId);
         }
     }
 
     /**
-     * Multiple Servers Configuration
+     * Multiple server configuration for {@link Mode#MULTI}.
      */
-    @Data
+    @Getter
+    @Setter
+    @ToString
     public static class MultiServerConfig {
+
+        /**
+         * When {@code true} the application fails to start if any server
+         * cannot be created. Default: {@code false} (the failing server is
+         * logged and skipped).
+         */
         private boolean failFast;
 
+        /**
+         * The configured servers.
+         */
         private List<ServerConfig> servers;
 
         /**
-         * Validates the multi-server configuration
+         * Validates the multi-server configuration.
+         *
+         * @throws IllegalArgumentException if the configuration is invalid
          */
         public void validate() {
-            Objects.requireNonNull(servers, "Server list cannot be null");
-
-            if (servers.isEmpty()) {
-                throw new IllegalArgumentException("No servers configured for MULTI mode");
+            if (servers == null || servers.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "mqtt.multi-server.servers must contain at least one server in MULTI mode");
             }
-
-            // Check for null configurations
+            Set<String> seen = new HashSet<>();
             for (int i = 0; i < servers.size(); i++) {
                 ServerConfig config = servers.get(i);
                 if (config == null) {
-                    throw new IllegalArgumentException(String.format("Server configuration at index %d is null", i));
+                    throw new IllegalArgumentException("mqtt.multi-server.servers[" + i + "] is null");
                 }
-
                 if (!config.isValid()) {
-                    throw new IllegalArgumentException(String.format("Invalid server configuration at index %d: %s", i, config));
+                    throw new IllegalArgumentException(
+                            "Invalid mqtt.multi-server.servers[" + i + "]: server-uri and client-id are required. " + config);
                 }
-
-                // In MULTI mode, each server must have a unique ID
-                if (config.getId() == null || config.getId().trim().isEmpty()) {
-                    throw new IllegalArgumentException(String.format("Server configuration at index %d must have an ID in MULTI mode", i));
+                if (!StringUtils.hasText(config.getId())) {
+                    throw new IllegalArgumentException(
+                            "mqtt.multi-server.servers[" + i + "].id is required in MULTI mode");
+                }
+                if (!seen.add(config.getId())) {
+                    throw new IllegalArgumentException(
+                            "Duplicate server id '" + config.getId() + "' in mqtt.multi-server.servers");
                 }
             }
-
-            List<String> allIds = servers.stream().map(ServerConfig::getId).collect(Collectors.toList());
-
-            Set<String> uniqueIds = new HashSet<>(allIds);
-            if (uniqueIds.size() != allIds.size()) {
-                throw new IllegalArgumentException("Duplicate server IDs found in MULTI mode configuration");
-            }
-        }
-
-        /**
-         * Returns a server configuration by ID
-         */
-        public Optional<ServerConfig> getServerById(String id) {
-            if (id == null || id.trim().isEmpty() || servers == null || servers.isEmpty()) {
-                return Optional.empty();
-            }
-
-            return servers.stream().filter(server -> id.equals(server.getId())).findFirst();
-        }
-
-        /**
-         * Returns server configurations by predicate
-         */
-        public List<ServerConfig> getServersBy(Predicate<ServerConfig> predicate) {
-            Objects.requireNonNull(predicate, "Predicate cannot be null");
-
-            return servers.stream().filter(predicate).collect(Collectors.toList());
-        }
-
-        /**
-         * Returns server configurations that require authentication
-         */
-        public List<ServerConfig> getServersWithAuth() {
-            return getServersBy(ServerConfig::hasAuthentication);
-        }
-
-        /**
-         * Returns server configurations with automatic reconnection enabled
-         */
-        public List<ServerConfig> getServersWithReconnect() {
-            return getServersBy(ServerConfig::isAutomaticReconnect);
-        }
-
-        /**
-         * Returns the number of configured servers
-         */
-        public int getServerCount() {
-            return servers == null ? 0 : servers.size();
-        }
-
-        /**
-         * Checks if the configuration contains any servers
-         */
-        public boolean hasServers() {
-            return servers != null && !servers.isEmpty();
-        }
-
-        /**
-         * Returns a string representation for logging
-         */
-        @Override
-        public String toString() {
-            String serverList = servers == null ? "" : servers.stream().map(ServerConfig::toString).collect(Collectors.joining(", "));
-            return "MultiServerConfig{" +
-                    "failFast=" + failFast + ", " +
-                    "serverCount=" + getServerCount() + ", " +
-                    "servers=" + serverList +
-                    "}";
         }
     }
 
     /**
-     * Configuration for the asynchronous message-processing thread pool.
-     * <p>
-     * Messages are processed off the MQTT client thread on this executor when a
-     * handler is declared with {@code async = true}. A value of 0 falls back to a
-     * sensible default so the starter works out of the box.
+     * Pool sizing for the async message-processing executor.
+     *
+     * <p>A value of {@code 0} (the default) falls back to a sensible
+     * default: core = available processors, max = 2x available processors,
+     * queue capacity = 1024.
      */
-    @Data
+    @Getter
+    @Setter
+    @ToString
     public static class AsyncConfig {
-        /**
-         * Core pool size of the async executor.
-         * 0 = fall back to the number of available processors.
-         */
-        private int corePoolSize = 0;
 
         /**
-         * Maximum pool size of the async executor.
-         * 0 = fall back to (available processors * 2).
+         * Core pool size; {@code 0} = available processors.
          */
-        private int maxPoolSize = 0;
+        private int corePoolSize;
 
         /**
-         * Bounded queue capacity before the executor's rejection policy applies.
-         * 0 = fall back to 1024.
+         * Maximum pool size; {@code 0} = 2x available processors.
          */
-        private int queueCapacity = 0;
+        private int maxPoolSize;
+
+        /**
+         * Bounded queue capacity before backpressure (caller-runs) applies;
+         * {@code 0} = 1024.
+         */
+        private int queueCapacity;
     }
 
     /**
-     * Validates the entire MQTT configuration
+     * Validates the whole configuration. Called by the auto-configuration
+     * before any client is created, so invalid settings fail fast at startup.
+     *
+     * @throws IllegalArgumentException if the configuration is invalid
      */
     public void validate() {
         if (!enabled) {
-            return; // Skip validation if MQTT is disabled
+            return;
         }
-
-        Objects.requireNonNull(mode, "MQTT mode cannot be null");
-
+        Objects.requireNonNull(mode, "mqtt.mode cannot be null");
         switch (mode) {
-            case SINGLE:
-                Objects.requireNonNull(singleServer, "Single server configuration cannot be null in SINGLE mode");
-                if (!singleServer.isValid()) {
-                    throw new IllegalArgumentException("Invalid single server configuration: " + singleServer);
+            case SINGLE -> {
+                if (singleServer == null) {
+                    throw new IllegalArgumentException(
+                            "mqtt.single-server must be configured in SINGLE mode (server-uri and client-id are required)");
                 }
-                break;
-            case MULTI:
-                Objects.requireNonNull(multiServer, "Multi server configuration cannot be null in MULTI mode");
+                if (!singleServer.isValid()) {
+                    throw new IllegalArgumentException(
+                            "Invalid mqtt.single-server configuration: server-uri and client-id are required. " + singleServer);
+                }
+            }
+            case MULTI -> {
+                if (multiServer == null) {
+                    throw new IllegalArgumentException(
+                            "mqtt.multi-server must be configured in MULTI mode");
+                }
                 multiServer.validate();
-                break;
-            default:
-                break;
-        }
-    }
-
-    /**
-     * Returns the default server configuration based on mode
-     */
-    public ServerConfig getDefaultServerConfig() {
-        validate();
-
-        if (mode == Mode.SINGLE) {
-            return singleServer;
-        }
-        if (!multiServer.hasServers()) {
-            throw new IllegalStateException("No servers configured in MULTI mode");
-        }
-        return multiServer.servers.get(0);
-    }
-
-    /**
-     * Returns all server configurations
-     */
-    public List<ServerConfig> getAllServerConfigs() {
-        List<ServerConfig> configs = new ArrayList<>();
-        if (mode == Mode.SINGLE) {
-            if (singleServer != null && singleServer.isValid()) {
-                configs.add(singleServer);
-            }
-        } else {
-            if (multiServer != null && multiServer.hasServers()) {
-                configs.addAll(multiServer.getServers());
             }
         }
-        return configs;
     }
 
-    /**
-     * Returns server configurations by protocol
-     */
-    public Map<String, List<ServerConfig>> getServersByProtocol() {
-        return getAllServerConfigs().stream().collect(Collectors.groupingBy(ServerConfig::getProtocol, Collectors.toList()));
-    }
-
-    /**
-     * Returns unique client IDs
-     */
-    public Set<String> getUniqueClientIds() {
-        return getAllServerConfigs().stream().map(ServerConfig::getClientId).collect(Collectors.toSet());
-    }
-
-    /**
-     * Checks if any server requires authentication
-     */
-    public boolean hasServersRequiringAuth() {
-        return getAllServerConfigs().stream().anyMatch(ServerConfig::hasAuthentication);
-    }
-
-    /**
-     * Returns a summary of the configuration
-     */
-    public String getSummary() {
-        int totalServers = getAllServerConfigs().size();
-        int authServers = (int) getAllServerConfigs().stream().filter(ServerConfig::hasAuthentication).count();
-
-        return "MQTT Configuration Summary:\n" +
-                "==========================\n" +
-                "Enabled: " + enabled + "\n" +
-                "Mode: " + mode + "\n" +
-                "Total Servers: " + totalServers + "\n" +
-                "Servers with Authentication: " + authServers + "\n" +
-                "Protocols: " + getServersByProtocol().keySet() + "\n";
+    @Override
+    public String toString() {
+        return "MqttProperties{enabled=" + enabled + ", mode=" + mode
+                + ", singleServer=" + singleServer
+                + ", multiServer=" + multiServer
+                + ", async=" + async + "}";
     }
 }

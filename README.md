@@ -5,32 +5,36 @@
 [![](https://img.shields.io/badge/Java-17+-orange.svg)](https://www.oracle.com/java)
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.persiliao/mqtt-spring-boot-starter.svg)](https://search.maven.org/artifact/io.github.persiliao/mqtt-spring-boot-starter)
 
-A feature-rich, enterprise-grade MQTT client Spring Boot Starter that supports automatic configuration, declarative message processing, and various enhanced features.
+> 中文版: [README_zh.md](README_zh.md)
 
-## ✨ Features
+A feature-rich MQTT client Spring Boot Starter built on the [HiveMQ MQTT Client 5](https://github.com/hivemq/hivemq-mqtt-client): automatic configuration, declarative message handling, single/multi-server modes, TLS, automatic reconnection with subscription recovery, async and ordered processing, and per-handler statistics.
 
-- 🚀 **Out-of-the-box** - Zero configuration setup with Spring Boot auto-configuration
-- 🔧 **Multiple Modes** - Supports both single-server and multi-server modes
-- 📡 **Declarative Programming** - Annotation-based message handlers, no manual subscription needed
-- 🛡️ **High Reliability** - Built-in message deduplication and automatic reconnection
-- 📊 **Monitoring & Statistics** - Comprehensive message processing statistics and performance monitoring
-- 🔄 **Ordered Processing** - Supports ordered message processing by topic or client
-- 🎯 **Smart Routing** - Supports wildcard topics and automatic parameter resolution
-- ⚡ **High Performance** - Asynchronous processing, connection pooling, and method caching optimization
-- 🔌 **Highly Extensible** - Supports custom validation, deserialization, and interceptors
+## Features
 
-## 📦 Requirements
+- **Out-of-the-box** — zero-configuration setup via Spring Boot auto-configuration
+- **Single & multi-server** — `SINGLE` and `MULTI` modes with per-server credentials
+- **Declarative handlers** — annotate a bean with `@MqttMessageHandler`; topics are subscribed automatically, no manual wiring
+- **TLS** — `ssl://` server URIs negotiate TLS with the default trust store
+- **Automatic reconnection** — client-level exponential backoff; subscriptions are (re)established on every (re)connection
+- **Async processing** — handlers run on a tunable thread pool so the MQTT client thread is never blocked
+- **Ordered processing** — per-topic or per-client ordering guarantees on demand
+- **Duplicate suppression** — optional content-based deduplication with a bounded LRU window
+- **JSON deserialization** — `Map`/POJO handler parameters deserialized via Jackson
+- **Statistics** — per-handler counters (success/failure, latency, throughput inputs) exposed for monitoring
+- **Fail-fast validation** — invalid configuration fails the application context at startup with a clear message
+
+## Requirements
 
 - Java 17+ (compiled to Java 17 bytecode, class file version 61)
-- Spring Boot 3.x or higher (Spring Boot version is inherited from the parent and can be overridden via `${spring-boot.version}`; values below 3.x are rejected by the build)
-- Maven 3.6+ or Gradle 7.x
-- HiveMQ MQTT Client 5.x
+- Spring Boot 3.x or higher (the version is inherited from the parent and overridable via `${spring-boot.version}`; the build rejects any 2.x release)
+- HiveMQ MQTT Client 1.3.x (pulled in transitively)
 
-## 🚀 Quick Start
+## Quick Start
 
-### 1. Add Dependency
+### 1. Add the dependency
 
 **Maven:**
+
 ```xml
 <dependency>
     <groupId>io.github.persiliao</groupId>
@@ -40,13 +44,12 @@ A feature-rich, enterprise-grade MQTT client Spring Boot Starter that supports a
 ```
 
 **Gradle:**
+
 ```groovy
 implementation 'io.github.persiliao:mqtt-spring-boot-starter:2026.1.1'
 ```
 
-### 2. Basic Configuration
-
-Add configuration to `application.yml`:
+### 2. Configure the broker
 
 ```yaml
 mqtt:
@@ -54,55 +57,59 @@ mqtt:
   mode: SINGLE
   single-server:
     server-uri: tcp://localhost:1883
-    client-id: spring-app-${random.uuid}
+    client-id: my-app-${random.uuid}
     username: ${MQTT_USERNAME:}
     password: ${MQTT_PASSWORD:}
 ```
 
-### 3. Create Message Handler
+### 3. Declare a handler
 
 ```java
-@Slf4j
 @Component
 @MqttMessageHandler(topics = "sensor/temperature")
 public class TemperatureHandler {
-    
+
     public void handleMessage(String topic, String payload) {
-        log.info("Received temperature data: topic={}, temperature={}°C", topic, payload);
+        System.out.println("Received on " + topic + ": " + payload);
     }
 }
 ```
 
-### 4. Run Application
+That is all — the starter subscribes the topic on connection and routes incoming messages to the method.
 
-Start the Spring Boot application, and the handler will automatically subscribe to the configured topics and process messages.
+## Configuration Reference
 
-## ⚙️ Detailed Configuration
+Prefix: `mqtt`
 
-### Single Server Mode
+| Property | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Enables the whole auto-configuration |
+| `mode` | `SINGLE` | `SINGLE` or `MULTI` |
+| `async.core-pool-size` | `0` | Core pool size of the async executor (`0` = available processors) |
+| `async.max-pool-size` | `0` | Max pool size (`0` = 2x available processors) |
+| `async.queue-capacity` | `0` | Bounded queue capacity before backpressure (`0` = 1024) |
+
+### Server configuration (`mqtt.single-server.*` / `mqtt.multi-server.servers[n].*`)
+
+| Property | Default | Description |
+|---|---|---|
+| `id` | `default` | Logical server id (required in `MULTI` mode; passed to handlers as server id) |
+| `server-uri` | — | Broker address. Schemes: `tcp://` and `ssl://` (TLS). Missing scheme = `tcp`. Default ports: 1883 / 8883 |
+| `client-id` | — | MQTT client identifier (required, must be unique per broker) |
+| `username` / `password` | — | MQTT authentication credentials |
+| `keep-alive` | `60` | Keep-alive interval in seconds |
+| `session-expiry-interval` | `3600` | MQTT 5 session expiry in seconds |
+| `clean-start` | `false` | MQTT 5 clean start flag |
+| `automatic-reconnect` | `true` | Client-level automatic reconnection with exponential backoff |
+| `initial-delay` | `1s` | Initial reconnection backoff delay (any Spring `Duration` format, e.g. `500ms`, `2s`) |
+| `max-delay` | `30s` | Upper bound of the reconnection backoff |
+| `receive-maximum` | `32` | MQTT 5 receive maximum |
+| `maximum-packet-size` | `8388608` | MQTT 5 maximum packet size in bytes |
+
+### Multi-server example
 
 ```yaml
 mqtt:
-  enabled: true
-  mode: SINGLE
-  single-server:
-    server-uri: tcp://mqtt.example.com:1883
-    client-id: app-client-${spring.application.name}
-    username: admin
-    password: secret123
-    keep-alive: 60
-    session-expiry-interval: 86400
-    clean-start: false
-    automatic-reconnect: true
-    initial-delay: 1
-    max-delay: 30
-```
-
-### Multiple Servers Mode
-
-```yaml
-mqtt:
-  enabled: true
   mode: MULTI
   multi-server:
     fail-fast: false
@@ -115,283 +122,207 @@ mqtt:
       - id: secondary
         server-uri: ssl://secondary.example.com:8883
         client-id: app-secondary
-        username: ${SECONDARY_MQTT_USER}
-        password: ${SECONDARY_MQTT_PASS}
 ```
 
-### Environment-Specific Configuration
+With `fail-fast: true` the context fails to start if any server cannot be created; otherwise failing servers are logged and skipped.
 
-```yaml
-# application-dev.yml
-mqtt:
-  single-server:
-    server-uri: tcp://localhost:1883
-    client-id: dev-${random.uuid}
-    clean-start: true
-```
+## Annotation Reference
 
-```yaml
-# application-prod.yml
-mqtt:
-  mode: MULTI
-  multi-server:
-    servers:
-      - id: prod-1
-        server-uri: ${PROD_MQTT_URI_1}
-        client-id: ${HOSTNAME}-prod-1
-      - id: prod-2
-        server-uri: ${PROD_MQTT_URI_2}
-        client-id: ${HOSTNAME}-prod-2
-```
+`@MqttMessageHandler` (meta-annotated with `@Component`):
 
-## 📖 Annotation Usage
+| Attribute | Default | Description |
+|---|---|---|
+| `topics` | — | Topic filters to subscribe to (supports `+` and `#` wildcards) |
+| `qos` | `1` | QoS of the subscriptions (0, 1, 2) |
+| `async` | `true` | Process messages on the async pool instead of the MQTT client thread |
+| `serverId` | `""` | Subscribe to a single server (`""`/`*` = all configured servers) |
+| `serverIds` | `{}` | Subscribe to multiple servers (takes precedence over `serverId`) |
+| `retainAsPublished` | `false` | Preserve the published retain flag (MQTT 5) |
+| `deduplicate` | `false` | Drop messages whose content fingerprint was seen recently on the same subscription |
+| `ordering` | `NONE` | `NONE`, `PER_TOPIC`, or `PER_CLIENT` ordering guarantee |
+| `maxConcurrentMessages` | `0` | Backlog queue capacity of the ordered executor (`0` = built-in default) |
+| `autoDeserialize` | `true` | Deserialize JSON payloads into `Map`/POJO parameters |
+| `contentType` | `application/json` | Declared payload content type |
+| `maxPayloadSize` | `0` | Drop messages larger than this (`0` = no limit) |
+| `statistics` | `true` | Collect per-handler processing statistics |
+| `group` / `description` / `tags` | — | Metadata for documentation and tooling |
 
-### Basic Usage
+### Handler methods
+
+Handler methods are **public, non-static instance methods whose name starts with `handle`** and which declare at least one resolvable parameter. When a bean declares several, they are tried in declaration order and the first one that completes without throwing wins (a convenient fallback chain).
+
+| Parameter type | Resolved value |
+|---|---|
+| `String` | the topic (first parameter) or the payload decoded as UTF-8 |
+| `byte[]` | the raw payload |
+| `Mqtt5Publish` | the full MQTT 5 publish message |
+| `MqttMessageContext` | envelope with `topic`, `payload`, `serverId` and the `Mqtt5Publish` |
+| `Map` / POJO | the payload deserialized from JSON (requires `autoDeserialize = true` and an `ObjectMapper` bean) |
 
 ```java
-@Slf4j
 @Component
-@MqttMessageHandler(topics = "home/living-room/temperature")
-public class TemperatureHandler {
-    
+@MqttMessageHandler(topics = "device/+/status", qos = 2, serverIds = "primary")
+public class DeviceStatusHandler {
+
+    // Simplest form
     public void handleMessage(String topic, String payload) {
-        // Process temperature message
+        // topic + text payload
+    }
+
+    // With server context and the full message
+    public void handleDeviceStatus(MqttMessageContext context, Mqtt5Publish publish) {
+        String fromServer = context.serverId();
+        byte[] raw = context.payload();
     }
 }
 ```
 
-### Support for Multiple Parameter Types
+> **Note on server ids:** in `SINGLE` mode the server id is `mqtt.single-server.id` (or `default`); in `MULTI` mode it is the configured `id` of each server.
 
-```java
-@Component
-@MqttMessageHandler(topics = "sensor/#")
-public class SensorHandler {
-    
-    // Topic + String payload
-    public void handleMessage(String topic, String payload) {
-        // Process string message
-    }
-    
-    // Raw byte data
-    public void handleMessage(String topic, byte[] payload) {
-        // Process binary message
-    }
-    
-    // Complete MQTT message object
-    public void handleMessage(Mqtt5Publish publish) {
-        // Access all MQTT message properties
-    }
-    
-    // Server identifier
-    public void handleMessage(String topic, String payload, String serverId) {
-        // Know which server the message came from
-    }
-}
+## Message Processing Flow
+
+```
+Incoming publish
+  → duplicate check (if deduplicate)
+  → payload size check (if maxPayloadSize > 0)
+  → dispatch:
+      ordering = PER_TOPIC / PER_CLIENT → dedicated single-thread executor per key
+      async = true                       → configurable async pool
+      async = false                      → MQTT client callback thread (synchronous)
+  → invoke handler methods, first success wins
+  → update statistics (if statistics)
 ```
 
-### Advanced Feature Configuration
+- **Async pool** — daemon threads, bounded queue, caller-runs backpressure (messages are never dropped).
+- **Ordered executors** — one single-thread executor per (topic, handler) or (server, handler) key; a full backlog queue makes the MQTT client thread run the handler itself as backpressure.
+- **Deduplication** — per subscription, a bounded LRU (1000 entries) of content fingerprints (topic + QoS + retain + payload). It mitigates QoS 1/2 re-delivery; it does **not** make handlers idempotent.
+
+## Publishing Messages
+
+Inject the client bean (`singleMqttClient`, or the `multiMqttClients` map) and publish directly:
 
 ```java
-@Component
-@MqttMessageHandler(
-    topics = {"device/+/status", "device/+/data"},
-    qos = 2,
-    serverIds = {"primary", "secondary"},
-    async = true,
-    retain = true,
-    deduplicate = true,
-    ordering = MqttMessageHandler.Ordering.PER_TOPIC,
-    validation = true,
-    maxPayloadSize = 1024 * 1024,  // 1MB
-    contentType = "application/json",
-    autoDeserialize = true,
-    statistics = true,
-    description = "Device Status Monitoring Handler",
-    tags = {"device", "monitoring"}
-)
-public class AdvancedDeviceHandler {
-    
-    public void handleMessage(String topic, Map<String, Object> payload, String serverId) {
-        // Auto-deserialized JSON message
-    }
-}
-```
-
-## 🎯 Topic Pattern Support
-
-Supports standard MQTT topic wildcards:
-
-```java
-// Single-level wildcard +
-@MqttMessageHandler(topics = "home/+/temperature")
-// Matches: home/living-room/temperature, home/bedroom/temperature
-// Does NOT match: home/living-room/sensor/temperature
-
-// Multi-level wildcard #
-@MqttMessageHandler(topics = "home/#")
-// Matches: home/living-room/temperature, home/kitchen/light/status
-// Matches: home/floor1/room2/sensor/data
-```
-
-## 🔧 API Reference
-
-### Publishing Messages
-
-```java
-@Slf4j
 @Component
 @RequiredArgsConstructor
-public class MqttMessagePublisher {
-    
-    private final Mqtt5AsyncClient mqttClient;
-    
-    public void publishTemperature(String deviceId, double temperature) {
-        String topic = "sensor/" + deviceId + "/temperature";
-        String payload = String.valueOf(temperature);
-        
-        mqttClient.publishWith()
-            .topic(topic)
-            .payload(payload.getBytes())
-            .qos(MqttQos.AT_LEAST_ONCE)
-            .retain(false)
-            .send()
-            .whenComplete((result, throwable) -> {
-                if (throwable != null) {
-                    log.error("Failed to publish message: {}", throwable.getMessage(), throwable);
-                } else {
-                    log.debug("Message published successfully: {}", topic);
-                }
-            });
+public class TemperaturePublisher {
+
+    private final Mqtt5AsyncClient client;
+
+    public void publish(String deviceId, double temperature) {
+        client.publishWith()
+                .topic("sensor/" + deviceId + "/temperature")
+                .payload(String.valueOf(temperature).getBytes(StandardCharsets.UTF_8))
+                .qos(MqttQos.AT_LEAST_ONCE)
+                .send()
+                .whenComplete((result, error) -> {
+                    if (error != null) {
+                        log.error("Publish failed", error);
+                    }
+                });
     }
 }
 ```
 
-### Getting Statistics
+## Monitoring & Statistics
+
+`MqttSubscriptionManager` exposes per-handler statistics (total/success/failure, success rate, average/max/min latency in ms, last processed timestamp):
 
 ```java
 @RestController
 @RequiredArgsConstructor
 public class MqttStatsController {
-    
-    private final MqttMessageHandlerProcessor processor;
-    
+
+    private final MqttSubscriptionManager subscriptionManager;
+
     @GetMapping("/mqtt/stats")
-    public Map<String, Object> getStats() {
-        return processor.getSubscriptionStats();
-    }
-    
-    @GetMapping("/mqtt/handlers/{handler}/stats")
-    public Map<String, Object> getHandlerStats(@PathVariable String handler) {
-        return processor.getHandlerStatistics(handler);
+    public Map<String, Object> stats() {
+        return subscriptionManager.getStatistics();
     }
 }
 ```
 
-## 🏗️ Architecture Design
+`MqttClientRegistry` exposes connection state:
 
-### Core Components
-
-```
-┌─────────────────────────────────────────────────┐
-│            MqttAutoConfiguration               │
-│  ├─ singleMqttClient()                         │
-│  ├─ multiMqttClients()                         │
-│  └─ MqttMessageHandlerProcessor                │
-└─────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────┐
-│       MqttMessageHandlerProcessor              │
-│  ├─ SubscriptionContext  (Subscription State)  │
-│  ├─ EnhancedHandlerMethod (Enhanced Processing)│
-│  ├─ HandlerStatistics    (Statistics)          │
-│  └─ LimitedSizeSet       (Deduplication)       │
-└─────────────────────────────────────────────────┘
+```java
+registry.connectionStatus();          // Map<serverId, connected>
+registry.isConnected("primary");
 ```
 
-### Message Processing Flow
+## Architecture
 
 ```
-1. MQTT message arrives
-   ↓
-2. Check for duplicate messages (if deduplication enabled)
-   ↓
-3. Validate message (if validation enabled)
-   ↓
-4. Auto-deserialize (if enabled)
-   ↓
-5. Invoke handler method
-   ↓
-6. Update statistics
+io.github.persiliao.mqtt
+├── MqttMessageHandler              declarative annotation (public API)
+├── MqttMessageContext              handler parameter envelope
+├── MqttMessageConversionException  payload conversion failure
+├── autoconfigure
+│   ├── MqttAutoConfiguration       @AutoConfiguration, bean wiring
+│   └── properties.MqttProperties   @ConfigurationProperties("mqtt")
+├── client
+│   ├── MqttClientFactory           builds & connects clients (TLS, backoff, listeners)
+│   └── MqttClientRegistry          client lookup + connection state + events
+└── handler
+    ├── MqttMessageHandlerProcessor discovers @MqttMessageHandler beans on context refresh
+    ├── MqttSubscriptionManager     subscription lifecycle, retry, statistics
+    ├── MqttMessageDispatcher       dedup → size check → dispatch → invoke → stats
+    ├── HandlerMethod / HandlerRegistration / HandlerStatistics / LruSet
 ```
 
-## 🔍 Troubleshooting
+**Why the handler discovery happens on `ContextRefreshedEvent`:** at that point every singleton — including the MQTT client beans — is already instantiated and configuration is bound, which removes the bean-creation ordering race between handlers and clients. Subscriptions are then performed on each client's *connected* event, so they survive the initial (asynchronous) connection and every automatic reconnect.
 
-### Common Issues
+## Troubleshooting
 
-**1. Connection Failed**
+**1. Connection fails** — check `server-uri`, `client-id` uniqueness and credentials:
+
 ```yaml
-# Check configuration
 mqtt:
   single-server:
-    server-uri: tcp://localhost:1883  # Verify URI is correct
-    client-id: unique-client-id       # Ensure unique
-    username: correct-username        # If authentication required
+    server-uri: tcp://localhost:1883
+    client-id: unique-client-id
+    username: correct-username
     password: correct-password
 ```
 
-**2. Messages Not Processed**
-- Check if topic pattern matches correctly
-- Verify handler method signature is correct
-- Check if other handlers are intercepting messages
+**2. Messages are not processed**
+- The topic filter must match the actual published topic (wildcards: `+` one level, `#` multi level)
+- The method name must start with `handle` and its parameters must be resolvable (see the table above)
+- Enable debug logging: `logging.level.io.github.persiliao.mqtt: DEBUG`
 
-**3. Performance Issues**
-```java
-// Process messages off the MQTT client thread on the internal async pool (recommended)
-@MqttMessageHandler(async = true)
-
-// For ordered processing, maxConcurrentMessages bounds the per-key backlog queue
-@MqttMessageHandler(ordering = MqttMessageHandler.Ordering.PER_TOPIC, maxConcurrentMessages = 10)
-```
+**3. Performance tuning**
 
 ```yaml
-# Tune the async processing pool (optional; sensible defaults are used when omitted)
 mqtt:
   async:
-    core-pool-size: 4      # 0 = available processors
-    max-pool-size: 8       # 0 = available processors * 2
-    queue-capacity: 1024   # 0 = 1024
+    core-pool-size: 4
+    max-pool-size: 8
+    queue-capacity: 2048
 ```
 
-### Debug Logging
-
-```yaml
-logging:
-  level:
-    io.github.persiliao.mqtt: DEBUG
-    com.hivemq: INFO
+```java
+// Serialize messages of the same topic; bound the backlog
+@MqttMessageHandler(topics = "orders/#", ordering = MqttMessageHandler.Ordering.PER_TOPIC, maxConcurrentMessages = 512)
 ```
 
-## 📈 Monitoring Metrics
+**4. Long-running handlers** — keep them async (`async = true`, the default); a synchronous handler blocks message ingestion for that connection.
 
-The starter provides the following monitoring metrics:
+## Upgrade Guide
 
-- Subscription status statistics
-- Message processing success rate
-- Average processing time
-- Throughput (messages/second)
-- Duplicate message count
+### From 2.x to 3.0.0
 
-## 🔄 Upgrade Guide
+3.0.0 is a ground-up rewrite. Breaking changes:
 
-### From 1.x to 2.x
+- **Packages moved**
+  - `io.github.persiliao.mqtt.hander.MqttMessageHandler` → `io.github.persiliao.mqtt.MqttMessageHandler`
+  - handler machinery → `io.github.persiliao.mqtt.handler`
+  - `MqttProperties` → `io.github.persiliao.mqtt.autoconfigure.properties`
+- **Annotation attributes removed** (never functional): `timeout`, `errorHandling`, `priority`, `version`; `retain` renamed to `retainAsPublished`
+- **`serverId` method parameter no longer exists** — use the `MqttMessageContext` parameter instead
+- **`ssl://` now performs real TLS** (2.x only mapped the port)
+- **`statistics` flag is now honored** (default `true`)
+- **`PER_CLIENT` ordering now orders per server connection** (2.x keyed it per topic)
+- Bean names are unchanged: `singleMqttClient`, `multiMqttClients`
 
-1. Update dependency version
-2. Check configuration property changes
-3. Verify annotation property compatibility
-4. Test message processing logic
-
-## 🤝 Contributing
+## Contributing
 
 Issues and Pull Requests are welcome!
 
@@ -401,20 +332,12 @@ Issues and Pull Requests are welcome!
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-- https://github.com/hivemq/hivemq-mqtt-client - Excellent MQTT client library
-- https://spring.io/projects/spring-boot - Excellent Java application framework
+- [HiveMQ MQTT Client](https://github.com/hivemq/hivemq-mqtt-client) — excellent MQTT 3/5 client library
+- [Spring Boot](https://spring.io/projects/spring-boot)
 - All contributors and users
-
-## 📞 Support
-
-- Submit an https://github.com/persiliao/mqtt-spring-boot-starter/issues
-- Check the https://github.com/persiliao/mqtt-spring-boot-starter/wiki documentation
-- Join https://github.com/persiliao/mqtt-spring-boot-starter/discussions
-
-

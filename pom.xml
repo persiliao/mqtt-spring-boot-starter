@@ -45,13 +45,12 @@
         <!--
           Compile to Java 17 bytecode (class file version 61); the jar requires
           a Java 17+ runtime. The Spring Boot version is NOT pinned here — it
-          stays overridable via ${spring-boot.version} inherited from the parent,
-          but the enforcer rule below rejects any release below 3.x, so this
-          artifact serves Spring Boot 3.x+ only.
+          stays overridable via ${spring-boot.version} inherited from the
+          parent, but the enforcer rule below rejects any release below 3.x,
+          so this artifact serves Spring Boot 3.x+ only.
         -->
         <maven.compiler.release>17</maven.compiler.release>
-        <hivemq.version>1.3.13</hivemq.version>
-        <jetbrains.annotations.version>13.0</jetbrains.annotations.version>
+        <hivemq.version>1.3.17</hivemq.version>
     </properties>
 
     <dependencies>
@@ -68,36 +67,27 @@
             <artifactId>spring-boot-configuration-processor</artifactId>
             <optional>true</optional>
         </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-actuator</artifactId>
-            <optional>true</optional>
-        </dependency>
         <!-- HiveMQ MQTT Client -->
         <dependency>
             <groupId>com.hivemq</groupId>
             <artifactId>hivemq-mqtt-client</artifactId>
             <version>${hivemq.version}</version>
         </dependency>
-        <!-- For @Async support -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-aop</artifactId>
-        </dependency>
+        <!-- JSON payload deserialization (Map / POJO handler parameters) -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Test -->
         <dependency>
-            <groupId>org.jetbrains</groupId>
-            <artifactId>annotations</artifactId>
-            <version>${jetbrains.annotations.version}</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 
