@@ -7,10 +7,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.event.ContextRefreshedEvent;
+import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.core.annotation.AnnotationUtils;
-import org.springframework.util.ClassUtils;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Discovers beans annotated with {@link MqttMessageHandler} and registers them
@@ -29,7 +30,7 @@ public class MqttMessageHandlerProcessor implements ApplicationListener<ContextR
     private static final Logger log = LoggerFactory.getLogger(MqttMessageHandlerProcessor.class);
 
     private final MqttSubscriptionManager subscriptionManager;
-    private volatile boolean processed;
+    private final AtomicBoolean processed = new AtomicBoolean();
 
     /**
      * Creates the processor.
@@ -42,10 +43,9 @@ public class MqttMessageHandlerProcessor implements ApplicationListener<ContextR
 
     @Override
     public void onApplicationEvent(ContextRefreshedEvent event) {
-        if (processed) {
+        if (!processed.compareAndSet(false, true)) {
             return;
         }
-        processed = true;
 
         ApplicationContext context = event.getApplicationContext();
         MqttProperties properties = context.getBean(MqttProperties.class);
@@ -57,12 +57,19 @@ public class MqttMessageHandlerProcessor implements ApplicationListener<ContextR
         int registered = 0;
         for (Map.Entry<String, Object> entry : beans.entrySet()) {
             Object bean = entry.getValue();
-            Class<?> beanClass = ClassUtils.getUserClass(bean);
+            // ultimateTargetClass() also unwraps JDK dynamic proxies, whose
+            // proxy class does not carry the annotation of the target class.
+            Class<?> beanClass = AopProxyUtils.ultimateTargetClass(bean);
             MqttMessageHandler annotation = AnnotationUtils.findAnnotation(beanClass, MqttMessageHandler.class);
             if (annotation == null) {
                 continue;
             }
             HandlerRegistration registration = HandlerRegistration.create(entry.getKey(), bean, annotation);
+            if (registration.getTopics().isEmpty()) {
+                log.warn("Bean '{}' is annotated with @MqttMessageHandler but declares no topic; "
+                        + "it will not subscribe to anything", entry.getKey());
+                continue;
+            }
             if (registration.getMethods().isEmpty()) {
                 log.warn("Bean '{}' is annotated with @MqttMessageHandler but declares no discoverable "
                                 + "handler method (public non-static method starting with 'handle' "

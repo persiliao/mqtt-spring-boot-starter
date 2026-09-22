@@ -88,6 +88,7 @@ Prefix: `mqtt`
 | `async.core-pool-size` | `0` | Core pool size of the async executor (`0` = available processors) |
 | `async.max-pool-size` | `0` | Max pool size (`0` = 2x available processors) |
 | `async.queue-capacity` | `0` | Bounded queue capacity before backpressure (`0` = 1024) |
+| `async.max-ordered-executors` | `64` | Cap on the per-key ordered executors (see [Ordering](#ordering-and-backpressure)) |
 
 ### Server configuration (`mqtt.single-server.*` / `mqtt.multi-server.servers[n].*`)
 
@@ -97,14 +98,16 @@ Prefix: `mqtt`
 | `server-uri` | — | Broker address. Schemes: `tcp://` and `ssl://` (TLS). Missing scheme = `tcp`. Default ports: 1883 / 8883 |
 | `client-id` | — | MQTT client identifier (required, must be unique per broker) |
 | `username` / `password` | — | MQTT authentication credentials |
-| `keep-alive` | `60` | Keep-alive interval in seconds |
-| `session-expiry-interval` | `3600` | MQTT 5 session expiry in seconds |
+| `keep-alive` | `60` | Keep-alive interval in seconds (0–65535) |
+| `session-expiry-interval` | `3600` | MQTT 5 session expiry in seconds (0–4294967295) |
 | `clean-start` | `false` | MQTT 5 clean start flag |
 | `automatic-reconnect` | `true` | Client-level automatic reconnection with exponential backoff |
-| `initial-delay` | `1s` | Initial reconnection backoff delay (any Spring `Duration` format, e.g. `500ms`, `2s`) |
+| `initial-delay` | `1s` | Initial reconnection backoff delay (any Spring `Duration` format, e.g. `500ms`, `2s`); must not exceed `max-delay` |
 | `max-delay` | `30s` | Upper bound of the reconnection backoff |
-| `receive-maximum` | `32` | MQTT 5 receive maximum |
-| `maximum-packet-size` | `8388608` | MQTT 5 maximum packet size in bytes |
+| `receive-maximum` | `32` | MQTT 5 receive maximum (1–65535) |
+| `maximum-packet-size` | `8388608` | MQTT 5 maximum packet size in bytes (must be positive) |
+
+All values are validated at startup: an out-of-range or missing value fails the context with a message naming the offending property instead of surfacing as an opaque error from the MQTT stack.
 
 ### Multi-server example
 
@@ -142,7 +145,6 @@ With `fail-fast: true` the context fails to start if any server cannot be create
 | `ordering` | `NONE` | `NONE`, `PER_TOPIC`, or `PER_CLIENT` ordering guarantee |
 | `maxConcurrentMessages` | `0` | Backlog queue capacity of the ordered executor (`0` = built-in default) |
 | `autoDeserialize` | `true` | Deserialize JSON payloads into `Map`/POJO parameters |
-| `contentType` | `application/json` | Declared payload content type |
 | `maxPayloadSize` | `0` | Drop messages larger than this (`0` = no limit) |
 | `statistics` | `true` | Collect per-handler processing statistics |
 | `group` / `description` / `tags` | — | Metadata for documentation and tooling |
@@ -194,8 +196,19 @@ Incoming publish
 ```
 
 - **Async pool** — daemon threads, bounded queue, caller-runs backpressure (messages are never dropped).
-- **Ordered executors** — one single-thread executor per (topic, handler) or (server, handler) key; a full backlog queue makes the MQTT client thread run the handler itself as backpressure.
 - **Deduplication** — per subscription, a bounded LRU (1000 entries) of content fingerprints (topic + QoS + retain + payload). It mitigates QoS 1/2 re-delivery; it does **not** make handlers idempotent.
+
+### Ordering and backpressure
+
+An ordered handler gets **one single-thread executor per ordering key**; a full backlog queue makes the MQTT client thread run the handler itself as backpressure.
+
+Because the key is derived from the topic of the *incoming* message, a wildcard subscription such as `sensor/#` can yield an unbounded number of keys — one thread each. To keep the footprint bounded:
+
+- at most `mqtt.async.max-ordered-executors` (default `64`) ordered executors are created; keys beyond the cap share the async pool, so ordering is no longer guaranteed for them (a warning is logged once);
+- idle executors release their thread, so topics that stop receiving messages cost nothing;
+- the per-subscription deduplication windows are capped at 1024 as well.
+
+If you need strict ordering, subscribe with a narrow topic filter rather than raising the cap.
 
 ## Publishing Messages
 
@@ -247,6 +260,15 @@ public class MqttStatsController {
 registry.connectionStatus();          // Map<serverId, connected>
 registry.isConnected("primary");
 ```
+
+## Shutdown Behaviour
+
+On context close the starter:
+
+1. shuts down the retry scheduler, the async pool and the ordered executors, waiting up to 5 seconds each;
+2. sends a `DISCONNECT` packet for every **connected** client, so the broker releases the session immediately instead of waiting for the keep-alive or session-expiry timeout. Failures are logged at debug level and never fail the shutdown.
+
+The HiveMQ client itself has no `close()` — its threads are daemons and die with the JVM — so the explicit `DISCONNECT` is what makes a rolling restart clean.
 
 ## Architecture
 
@@ -315,7 +337,7 @@ mqtt:
   - `io.github.persiliao.mqtt.hander.MqttMessageHandler` → `io.github.persiliao.mqtt.MqttMessageHandler`
   - handler machinery → `io.github.persiliao.mqtt.handler`
   - `MqttProperties` → `io.github.persiliao.mqtt.autoconfigure.properties`
-- **Annotation attributes removed** (never functional): `timeout`, `errorHandling`, `priority`, `version`; `retain` renamed to `retainAsPublished`
+- **Annotation attributes removed** (never functional): `timeout`, `errorHandling`, `priority`, `version`, `contentType`; `retain` renamed to `retainAsPublished`
 - **`serverId` method parameter no longer exists** — use the `MqttMessageContext` parameter instead
 - **`ssl://` now performs real TLS** (2.x only mapped the port)
 - **`statistics` flag is now honored** (default `true`)

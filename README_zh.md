@@ -88,6 +88,7 @@ public class TemperatureHandler {
 | `async.core-pool-size` | `0` | 异步线程池核心线程数（`0` = CPU 核数） |
 | `async.max-pool-size` | `0` | 异步线程池最大线程数（`0` = 2 × CPU 核数） |
 | `async.queue-capacity` | `0` | 有界队列容量，满后触发背压（`0` = 1024） |
+| `async.max-ordered-executors` | `64` | 有序执行器数量上限（见[顺序性与背压](#顺序性与背压)） |
 
 ### 服务器配置（`mqtt.single-server.*` / `mqtt.multi-server.servers[n].*`）
 
@@ -97,14 +98,16 @@ public class TemperatureHandler {
 | `server-uri` | — | Broker 地址。支持 `tcp://` 与 `ssl://`（TLS）；省略协议默认 `tcp`；默认端口 1883 / 8883 |
 | `client-id` | — | MQTT 客户端标识（必填，同一 Broker 下必须唯一） |
 | `username` / `password` | — | MQTT 认证凭据 |
-| `keep-alive` | `60` | 心跳间隔（秒） |
-| `session-expiry-interval` | `3600` | MQTT 5 会话过期时间（秒） |
+| `keep-alive` | `60` | 心跳间隔（秒，0–65535） |
+| `session-expiry-interval` | `3600` | MQTT 5 会话过期时间（秒，0–4294967295） |
 | `clean-start` | `false` | MQTT 5 干净启动标志 |
 | `automatic-reconnect` | `true` | 客户端级自动重连（指数退避） |
-| `initial-delay` | `1s` | 重连初始退避时间（支持 Spring Duration 格式，如 `500ms`、`2s`） |
+| `initial-delay` | `1s` | 重连初始退避时间（支持 Spring Duration 格式，如 `500ms`、`2s`），不得超过 `max-delay` |
 | `max-delay` | `30s` | 重连退避上限 |
-| `receive-maximum` | `32` | MQTT 5 接收上限 |
-| `maximum-packet-size` | `8388608` | MQTT 5 最大报文（字节） |
+| `receive-maximum` | `32` | MQTT 5 接收上限（1–65535） |
+| `maximum-packet-size` | `8388608` | MQTT 5 最大报文（字节，必须为正数） |
+
+所有取值在启动时即完成校验：越界或缺失会让上下文启动失败，并明确指出出错的配置项，而不是在运行期抛出来自 MQTT 协议栈的晦涩异常。
 
 ### 多服务器示例
 
@@ -142,7 +145,6 @@ mqtt:
 | `ordering` | `NONE` | `NONE`、`PER_TOPIC` 或 `PER_CLIENT` 顺序保证 |
 | `maxConcurrentMessages` | `0` | 有序执行器的积压队列容量（`0` = 内置默认值） |
 | `autoDeserialize` | `true` | 将 JSON 负载反序列化到 `Map`/POJO 参数 |
-| `contentType` | `application/json` | 声明的负载内容类型 |
 | `maxPayloadSize` | `0` | 超过该大小的消息直接丢弃（`0` = 不限制） |
 | `statistics` | `true` | 是否采集该 Handler 的处理统计 |
 | `group` / `description` / `tags` | — | 元数据，用于文档与工具 |
@@ -194,8 +196,19 @@ public class DeviceStatusHandler {
 ```
 
 - **异步线程池** — 守护线程、有界队列、caller-runs 背压（消息不会丢失）。
-- **有序执行器** — 每个（topic, handler）或（服务器, handler）key 一个单线程执行器；积压队列满时由 MQTT 客户端线程直接执行作为背压。
 - **去重** — 按订阅维护有界 LRU（1000 条）内容指纹（topic + QoS + retain + 负载）。可缓解 QoS 1/2 重传，但**不能**替代业务幂等。
+
+### 顺序性与背压
+
+有序 Handler 会为**每个顺序 key 分配一个单线程执行器**；积压队列满时由 MQTT 客户端线程直接执行作为背压。
+
+由于 key 取自**入站消息的实际 topic**，像 `sensor/#` 这样的通配符订阅会产生无界数量的 key —— 每个都占一个线程。为保证资源可控：
+
+- 最多创建 `mqtt.async.max-ordered-executors` 个（默认 `64`）有序执行器；超出的 key 共享异步线程池，即这些 topic 不再保证顺序（仅告警一次）；
+- 空闲执行器会释放线程，长期无消息的 topic 不再占用资源；
+- 按订阅的去重窗口同样设上限（1024 个）。
+
+若确实需要严格顺序，应使用更精确的 topic 过滤器，而不是一味调大上限。
 
 ## 发布消息
 
@@ -247,6 +260,15 @@ public class MqttStatsController {
 registry.connectionStatus();          // Map<serverId, connected>
 registry.isConnected("primary");
 ```
+
+## 停机行为
+
+上下文关闭时，starter 会：
+
+1. 依次关闭重试调度器、异步线程池与有序执行器（每个最多等待 5 秒）；
+2. 为每个**处于连接状态**的客户端发送 `DISCONNECT` 报文，让 Broker 立即释放会话，而不必等到心跳超时或会话过期。失败仅按 debug 记录，不会导致关闭失败。
+
+HiveMQ 客户端本身没有 `close()`（其线程为守护线程，随 JVM 退出），因此显式发送 `DISCONNECT` 才是滚动重启干净的关键。
 
 ## 架构
 
@@ -315,7 +337,7 @@ mqtt:
   - `io.github.persiliao.mqtt.hander.MqttMessageHandler` → `io.github.persiliao.mqtt.MqttMessageHandler`
   - Handler 机制 → `io.github.persiliao.mqtt.handler`
   - `MqttProperties` → `io.github.persiliao.mqtt.autoconfigure.properties`
-- **删除从未生效的注解属性**：`timeout`、`errorHandling`、`priority`、`version`；`retain` 更名为 `retainAsPublished`
+- **删除从未生效的注解属性**：`timeout`、`errorHandling`、`priority`、`version`、`contentType`；`retain` 更名为 `retainAsPublished`
 - **方法参数中的 `serverId` 不再支持** — 改用 `MqttMessageContext` 参数
 - **`ssl://` 现在真正启用 TLS**（2.x 仅映射端口）
 - **`statistics` 标志现在真实生效**（默认 `true`）

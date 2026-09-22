@@ -6,9 +6,11 @@ import io.github.persiliao.mqtt.MqttMessageContext;
 import io.github.persiliao.mqtt.MqttMessageConversionException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -79,16 +81,27 @@ final class HandlerMethod {
      */
     static boolean isResolvable(Method method, boolean autoDeserialize) {
         for (Class<?> type : method.getParameterTypes()) {
-            if (type == String.class || type == byte[].class || type == Mqtt5Publish.class
-                    || type == MqttMessageContext.class || Map.class.isAssignableFrom(type)) {
+            if (isBuiltIn(type)) {
                 continue;
             }
             // POJO parameter: only resolvable when JSON deserialization is enabled
             if (!autoDeserialize) {
                 return false;
             }
+            // A payload cannot be bound to an interface or an abstract type
+            // without extra type information — this is almost certainly an
+            // injected collaborator rather than a payload parameter, so the
+            // method is rejected instead of failing on every single message.
+            if (type.isInterface() || Modifier.isAbstract(type.getModifiers())) {
+                return false;
+            }
         }
         return true;
+    }
+
+    private static boolean isBuiltIn(Class<?> type) {
+        return type == String.class || type == byte[].class || type == Mqtt5Publish.class
+                || type == MqttMessageContext.class || Map.class.isAssignableFrom(type);
     }
 
     /**
@@ -105,7 +118,13 @@ final class HandlerMethod {
         for (int i = 0; i < args.length; i++) {
             args[i] = resolvers.get(i).resolve(publish, serverId, objectMapper);
         }
-        return ReflectionUtils.invokeMethod(method, bean, args);
+        // The method was resolved on the *target* class, but `bean` may be an
+        // AOP proxy. Re-mapping it onto the proxy class keeps the invocation
+        // legal for JDK dynamic proxies (which only implement the interfaces)
+        // while still going through the proxy, so advice such as
+        // @Transactional remains effective.
+        Method targetMethod = AopUtils.getMostSpecificMethod(method, bean.getClass());
+        return ReflectionUtils.invokeMethod(targetMethod, bean, args);
     }
 
     private ParameterResolver resolverFor(Class<?> type, int index) {
@@ -156,7 +175,10 @@ final class HandlerMethod {
     private Object toPojo(Mqtt5Publish publish, Class<?> type, ObjectMapper objectMapper) {
         byte[] payload = publish.getPayloadAsBytes();
         if (payload.length == 0) {
-            return null;
+            // An empty payload cannot become a primitive value; pass the
+            // primitive's default instead of null, which would make the
+            // reflective invocation fail with an argument type mismatch.
+            return defaultValue(type);
         }
         if (!autoDeserialize) {
             // Deserialization disabled: hand over the raw text and let the
@@ -174,5 +196,16 @@ final class HandlerMethod {
             throw new MqttMessageConversionException("Failed to deserialize JSON payload on topic '"
                     + publish.getTopic() + "' to " + type.getSimpleName() + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * @return {@code null} for reference types, the primitive default
+     *         ({@code 0}, {@code false}, ...) for primitive types
+     */
+    private static Object defaultValue(Class<?> type) {
+        if (!type.isPrimitive()) {
+            return null;
+        }
+        return java.lang.reflect.Array.get(java.lang.reflect.Array.newInstance(type, 1), 0);
     }
 }

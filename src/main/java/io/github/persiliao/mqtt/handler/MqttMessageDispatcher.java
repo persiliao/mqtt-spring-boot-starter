@@ -10,10 +10,13 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.ApplicationContext;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -38,14 +41,35 @@ public class MqttMessageDispatcher implements DisposableBean {
     private static final int DEFAULT_ORDERED_QUEUE_CAPACITY = 1024;
     private static final int DEDUPLICATION_WINDOW = 1000;
 
+    /**
+     * Fallback for the number of per-key ordered executors when no explicit
+     * {@code mqtt.async.max-ordered-executors} is configured.
+     */
+    private static final int DEFAULT_MAX_ORDERED_EXECUTORS = 64;
+
+    /**
+     * Upper bound on the number of per-subscription deduplication windows.
+     * Bounded for the same reason as the ordered executors: the key is derived
+     * from the topic of the incoming message, which is unbounded for wildcard
+     * subscriptions.
+     */
+    private static final int MAX_DEDUPLICATION_CACHES = 1024;
+
     private final MqttProperties properties;
     private final ApplicationContext applicationContext;
 
-    private final Map<String, LruSet> deduplicationCaches = new ConcurrentHashMap<>();
+    private final Map<String, LruSet> deduplicationCaches =
+            Collections.synchronizedMap(new LinkedHashMap<String, LruSet>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, LruSet> eldest) {
+                    return size() > MAX_DEDUPLICATION_CACHES;
+                }
+            });
     private final Map<String, ExecutorService> orderedExecutors = new ConcurrentHashMap<>();
     private volatile ExecutorService asyncExecutor;
     private volatile ObjectMapper objectMapper;
     private volatile boolean objectMapperMissingLogged;
+    private volatile boolean orderedExecutorLimitLogged;
 
     /**
      * Creates a dispatcher.
@@ -91,11 +115,19 @@ public class MqttMessageDispatcher implements DisposableBean {
         ExecutorService executor = executorFor(annotation, publish, serverId, registration);
         Runnable task = () -> runHandler(publish, registration, serverId);
         if (executor != null) {
-            executor.execute(task);
-        } else {
-            // Synchronous mode: run on the MQTT client callback thread.
-            task.run();
+            try {
+                executor.execute(task);
+                return;
+            } catch (RejectedExecutionException e) {
+                // The pool is already shutting down (context close) or its
+                // backlog is exhausted. Falling back to the caller thread keeps
+                // the message from being dropped silently.
+                log.warn("MQTT executor rejected the message on topic '{}' (server '{}'); "
+                        + "running it on the client thread instead", topic(publish), serverId);
+            }
         }
+        // Synchronous mode (or rejected submission): run on the MQTT client callback thread.
+        task.run();
     }
 
     /**
@@ -154,17 +186,49 @@ public class MqttMessageDispatcher implements DisposableBean {
     /**
      * A dedicated single-thread executor per key preserves the ordering
      * guarantee while moving processing off the MQTT client thread.
+     *
+     * <p>The number of executors is capped by {@link #MAX_ORDERED_EXECUTORS}.
+     * Once the cap is reached the shared async pool is used instead: ordering
+     * is no longer guaranteed for the offending topics, but the thread count
+     * stays bounded. Executors that become idle release their thread.
      */
     private ExecutorService orderedExecutor(String key, MqttMessageHandler annotation) {
+        ExecutorService existing = orderedExecutors.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        if (orderedExecutors.size() >= maxOrderedExecutors()) {
+            if (!orderedExecutorLimitLogged) {
+                orderedExecutorLimitLogged = true;
+                log.warn("Reached the limit of {} ordered MQTT executors; further ordering keys will "
+                        + "share the async pool. Use a narrower topic filter or Ordering.NONE "
+                        + "if the handler subscribes with wildcards (mqtt.async.max-ordered-executors).",
+                        maxOrderedExecutors());
+            }
+            return asyncExecutor();
+        }
         return orderedExecutors.computeIfAbsent(key, k -> {
             int capacity = annotation.maxConcurrentMessages() > 0
                     ? annotation.maxConcurrentMessages()
                     : DEFAULT_ORDERED_QUEUE_CAPACITY;
-            return new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+            ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1,
+                    60L, TimeUnit.SECONDS,
                     new LinkedBlockingQueue<>(capacity),
                     daemonThreadFactory("mqtt-ordered-" + k + "-"),
                     new ThreadPoolExecutor.CallerRunsPolicy());
+            // Without this the core thread would live forever, even for topics
+            // that never receive another message.
+            executor.allowCoreThreadTimeOut(true);
+            return executor;
         });
+    }
+
+    private int maxOrderedExecutors() {
+        MqttProperties.AsyncConfig config = properties.getAsync();
+        if (config == null || config.getMaxOrderedExecutors() <= 0) {
+            return DEFAULT_MAX_ORDERED_EXECUTORS;
+        }
+        return config.getMaxOrderedExecutors();
     }
 
     private ExecutorService asyncExecutor() {
@@ -178,10 +242,12 @@ public class MqttMessageDispatcher implements DisposableBean {
                     int core = config.getCorePoolSize() > 0 ? config.getCorePoolSize() : processors;
                     int max = config.getMaxPoolSize() > 0 ? config.getMaxPoolSize() : Math.max(2 * processors, core);
                     int queue = config.getQueueCapacity() > 0 ? config.getQueueCapacity() : DEFAULT_ASYNC_QUEUE_CAPACITY;
-                    executor = new ThreadPoolExecutor(core, max, 60L, TimeUnit.SECONDS,
+                    ThreadPoolExecutor pool = new ThreadPoolExecutor(core, max, 60L, TimeUnit.SECONDS,
                             new LinkedBlockingQueue<>(queue),
                             daemonThreadFactory("mqtt-async-"),
                             new ThreadPoolExecutor.CallerRunsPolicy());
+                    pool.allowCoreThreadTimeOut(true);
+                    executor = pool;
                     asyncExecutor = executor;
                     log.info("Initialized MQTT async executor: core={}, max={}, queue={}", core, max, queue);
                 }
@@ -250,6 +316,9 @@ public class MqttMessageDispatcher implements DisposableBean {
         shutdownExecutor(asyncExecutor);
         orderedExecutors.values().forEach(MqttMessageDispatcher::shutdownExecutor);
         orderedExecutors.clear();
+        synchronized (deduplicationCaches) {
+            deduplicationCaches.clear();
+        }
     }
 
     private static void shutdownExecutor(ExecutorService executor) {

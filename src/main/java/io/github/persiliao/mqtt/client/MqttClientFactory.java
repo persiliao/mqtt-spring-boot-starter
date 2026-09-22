@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -58,6 +59,10 @@ public class MqttClientFactory {
 
     private Mqtt5AsyncClient build(MqttProperties.ServerConfig config, String serverId) {
         URI uri = parseUri(config.getServerUri());
+        if (uri.getHost() == null) {
+            throw new IllegalArgumentException("Invalid MQTT server URI '" + config.getServerUri()
+                    + "': no host could be determined");
+        }
 
         Mqtt5ClientBuilder builder = Mqtt5Client.builder()
                 .identifier(config.getClientId())
@@ -68,9 +73,12 @@ public class MqttClientFactory {
             builder.sslWithDefaultConfig();
         }
         if (config.isAutomaticReconnect()) {
+            Duration initialDelay = config.getInitialDelay() == null
+                    ? Duration.ofSeconds(1) : config.getInitialDelay();
+            Duration maxDelay = config.getMaxDelay() == null ? Duration.ofSeconds(30) : config.getMaxDelay();
             builder.automaticReconnect()
-                    .initialDelay(config.getInitialDelay().toMillis(), TimeUnit.MILLISECONDS)
-                    .maxDelay(config.getMaxDelay().toMillis(), TimeUnit.MILLISECONDS)
+                    .initialDelay(initialDelay.toMillis(), TimeUnit.MILLISECONDS)
+                    .maxDelay(maxDelay.toMillis(), TimeUnit.MILLISECONDS)
                     .applyAutomaticReconnect();
         }
         builder.addConnectedListener(context -> {

@@ -1,11 +1,15 @@
 package io.github.persiliao.mqtt.client;
 
 import com.hivemq.client.mqtt.mqtt5.Mqtt5AsyncClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 
 import java.util.Collections;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Registry of the MQTT client instances managed by the starter, together with
@@ -19,7 +23,15 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * @since 3.0.0
  */
-public class MqttClientRegistry {
+public class MqttClientRegistry implements DisposableBean {
+
+    private static final Logger log = LoggerFactory.getLogger(MqttClientRegistry.class);
+
+    /**
+     * Time granted to each client to send its DISCONNECT packet during
+     * shutdown before the attempt is abandoned.
+     */
+    private static final long DISCONNECT_TIMEOUT_SECONDS = 5L;
 
     /**
      * Callback for client connection state changes.
@@ -132,5 +144,39 @@ public class MqttClientRegistry {
      */
     public Map<String, Boolean> connectionStatus() {
         return Map.copyOf(connectionState);
+    }
+
+    /**
+     * Sends a DISCONNECT packet for every connected client so that the broker
+     * does not keep the session until the keep-alive/expiry timeout elapses.
+     *
+     * <p>Failures are logged and never propagated: shutdown must not fail
+     * because a broker is unreachable.
+     */
+    public void disconnectAll() {
+        for (Map.Entry<String, Mqtt5AsyncClient> entry : clients.entrySet()) {
+            String serverId = entry.getKey();
+            if (!Boolean.TRUE.equals(connectionState.get(serverId))) {
+                continue;
+            }
+            try {
+                entry.getValue().disconnect().get(DISCONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                log.debug("Disconnected MQTT client of server '{}'", serverId);
+            } catch (Exception e) {
+                log.debug("Could not gracefully disconnect MQTT client of server '{}': {}",
+                        serverId, e.toString());
+            }
+        }
+    }
+
+    /**
+     * Gracefully disconnects all connected clients and clears the registry.
+     */
+    @Override
+    public void destroy() {
+        disconnectAll();
+        clients.clear();
+        connectionState.clear();
+        eventListener = null;
     }
 }

@@ -118,6 +118,88 @@ class MqttPropertiesTest {
     }
 
     @Test
+    void keepAliveOutOfRangeFails() {
+        MqttProperties properties = singleMode("tcp://localhost:1883", "client-a");
+        properties.getSingleServer().setKeepAlive(70000);
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(properties::validate)
+                .withMessageContaining("keep-alive");
+    }
+
+    @Test
+    void receiveMaximumMustBeWithinMqttRange() {
+        MqttProperties properties = singleMode("tcp://localhost:1883", "client-a");
+        properties.getSingleServer().setReceiveMaximum(0);
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(properties::validate)
+                .withMessageContaining("receive-maximum");
+    }
+
+    @Test
+    void maximumPacketSizeMustBePositive() {
+        MqttProperties properties = singleMode("tcp://localhost:1883", "client-a");
+        properties.getSingleServer().setMaximumPacketSize(0);
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(properties::validate)
+                .withMessageContaining("maximum-packet-size");
+    }
+
+    @Test
+    void sessionExpiryIntervalOutOfRangeFails() {
+        MqttProperties properties = singleMode("tcp://localhost:1883", "client-a");
+        properties.getSingleServer().setSessionExpiryInterval(-1L);
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(properties::validate)
+                .withMessageContaining("session-expiry-interval");
+    }
+
+    @Test
+    void nullReconnectDelayFails() {
+        MqttProperties properties = singleMode("tcp://localhost:1883", "client-a");
+        properties.getSingleServer().setInitialDelay(null);
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(properties::validate)
+                .withMessageContaining("initial-delay");
+    }
+
+    @Test
+    void initialDelayMustNotExceedMaxDelay() {
+        MqttProperties properties = singleMode("tcp://localhost:1883", "client-a");
+        properties.getSingleServer().setInitialDelay(java.time.Duration.ofSeconds(30));
+        properties.getSingleServer().setMaxDelay(java.time.Duration.ofSeconds(1));
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(properties::validate)
+                .withMessageContaining("must not exceed max-delay");
+    }
+
+    @Test
+    void duplicateServerIdsDifferingOnlyByWhitespaceFail() {
+        MqttProperties properties = new MqttProperties();
+        properties.setMode(MqttProperties.Mode.MULTI);
+        MqttProperties.MultiServerConfig multi = new MqttProperties.MultiServerConfig();
+        MqttProperties.ServerConfig first = new MqttProperties.ServerConfig();
+        first.setId("primary");
+        first.setServerUri("tcp://localhost:1883");
+        first.setClientId("client-a");
+        MqttProperties.ServerConfig second = new MqttProperties.ServerConfig();
+        second.setId(" primary ");
+        second.setServerUri("tcp://localhost:1884");
+        second.setClientId("client-b");
+        multi.setServers(java.util.List.of(first, second));
+        properties.setMultiServer(multi);
+
+        assertThatIllegalArgumentException()
+                .isThrownBy(properties::validate)
+                .withMessageContaining("Duplicate server id");
+    }
+
+    @Test
     void serverIdDefaultsToDefault() {
         MqttProperties.ServerConfig server = new MqttProperties.ServerConfig();
         assertThat(server.resolveId()).isEqualTo("default");

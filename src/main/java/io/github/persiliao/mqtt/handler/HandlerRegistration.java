@@ -4,7 +4,7 @@ import com.hivemq.client.mqtt.datatypes.MqttQos;
 import io.github.persiliao.mqtt.MqttMessageHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.util.ClassUtils;
+import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.util.StringUtils;
 
 import java.lang.reflect.Method;
@@ -57,7 +57,10 @@ public final class HandlerRegistration {
      * @return the registration
      */
     static HandlerRegistration create(String beanName, Object bean, MqttMessageHandler annotation) {
-        Class<?> beanClass = ClassUtils.getUserClass(bean);
+        // ultimateTargetClass() unwraps AOP proxies (JDK dynamic and CGLIB),
+        // so handler methods declared on the target class are discovered even
+        // when the bean is proxied.
+        Class<?> beanClass = AopProxyUtils.ultimateTargetClass(bean);
         List<HandlerMethod> methods = new ArrayList<>();
         for (Method method : beanClass.getMethods()) {
             if (method.isBridge() || method.isSynthetic() || Modifier.isStatic(method.getModifiers())) {
@@ -94,7 +97,14 @@ public final class HandlerRegistration {
             qos = MqttQos.AT_MOST_ONCE;
         }
 
-        return new HandlerRegistration(bean, beanName, annotation, List.of(annotation.topics()),
+        List<String> topics = new ArrayList<>(annotation.topics().length);
+        for (String topic : annotation.topics()) {
+            if (StringUtils.hasText(topic)) {
+                topics.add(topic.trim());
+            }
+        }
+
+        return new HandlerRegistration(bean, beanName, annotation, List.copyOf(topics),
                 methods, qos, allServers, serverIds);
     }
 

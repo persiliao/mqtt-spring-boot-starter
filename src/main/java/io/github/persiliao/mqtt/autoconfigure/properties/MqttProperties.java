@@ -82,7 +82,7 @@ public class MqttProperties {
      */
     @Getter
     @Setter
-    @ToString(exclude = "password")
+    @ToString
     public static class ServerConfig {
 
         /**
@@ -110,8 +110,10 @@ public class MqttProperties {
         private String username;
 
         /**
-         * Password for MQTT authentication.
+         * Password for MQTT authentication. Never included in
+         * {@link #toString()} to avoid leaking credentials into logs.
          */
+        @ToString.Exclude
         private String password;
 
         /**
@@ -181,11 +183,55 @@ public class MqttProperties {
         }
 
         /**
-         * @return {@code true} when the mandatory fields (server uri and
-         *         client id) are present
+         * Validates this server configuration, rejecting values the broker
+         * would refuse at connect time (out-of-range keep-alive, receive
+         * maximum, packet size, ...) and unusable reconnect delays.
+         *
+         * <p>Failing fast here turns an opaque runtime exception from the
+         * MQTT stack into a readable startup error.
+         *
+         * @param path the configuration path used in error messages,
+         *             e.g. {@code mqtt.single-server}
+         * @throws IllegalArgumentException if any value is invalid
          */
-        public boolean isValid() {
-            return StringUtils.hasText(serverUri) && StringUtils.hasText(clientId);
+        public void validate(String path) {
+            if (!StringUtils.hasText(serverUri)) {
+                throw new IllegalArgumentException(path + ".server-uri is required");
+            }
+            if (!StringUtils.hasText(clientId)) {
+                throw new IllegalArgumentException(path + ".client-id is required");
+            }
+            if (keepAlive < 0 || keepAlive > 65535) {
+                throw new IllegalArgumentException(
+                        path + ".keep-alive must be between 0 and 65535 but was " + keepAlive);
+            }
+            if (sessionExpiryInterval < 0 || sessionExpiryInterval > 4294967295L) {
+                throw new IllegalArgumentException(
+                        path + ".session-expiry-interval must be between 0 and 4294967295 but was "
+                                + sessionExpiryInterval);
+            }
+            if (receiveMaximum < 1 || receiveMaximum > 65535) {
+                throw new IllegalArgumentException(
+                        path + ".receive-maximum must be between 1 and 65535 but was " + receiveMaximum);
+            }
+            if (maximumPacketSize <= 0) {
+                throw new IllegalArgumentException(
+                        path + ".maximum-packet-size must be positive but was " + maximumPacketSize);
+            }
+            if (automaticReconnect) {
+                if (initialDelay == null || initialDelay.isNegative()) {
+                    throw new IllegalArgumentException(
+                            path + ".initial-delay must be a non-negative duration but was " + initialDelay);
+                }
+                if (maxDelay == null || maxDelay.isNegative()) {
+                    throw new IllegalArgumentException(
+                            path + ".max-delay must be a non-negative duration but was " + maxDelay);
+                }
+                if (initialDelay.compareTo(maxDelay) > 0) {
+                    throw new IllegalArgumentException(path + ".initial-delay (" + initialDelay
+                            + ") must not exceed max-delay (" + maxDelay + ")");
+                }
+            }
         }
     }
 
@@ -225,18 +271,17 @@ public class MqttProperties {
                 if (config == null) {
                     throw new IllegalArgumentException("mqtt.multi-server.servers[" + i + "] is null");
                 }
-                if (!config.isValid()) {
-                    throw new IllegalArgumentException(
-                            "Invalid mqtt.multi-server.servers[" + i + "]: server-uri and client-id are required. " + config);
-                }
                 if (!StringUtils.hasText(config.getId())) {
                     throw new IllegalArgumentException(
                             "mqtt.multi-server.servers[" + i + "].id is required in MULTI mode");
                 }
-                if (!seen.add(config.getId())) {
+                // Dedupe on the *resolved* id: "a" and " a " would otherwise be
+                // accepted as two distinct servers yet register under the same key.
+                if (!seen.add(config.resolveId())) {
                     throw new IllegalArgumentException(
-                            "Duplicate server id '" + config.getId() + "' in mqtt.multi-server.servers");
+                            "Duplicate server id '" + config.resolveId() + "' in mqtt.multi-server.servers");
                 }
+                config.validate("mqtt.multi-server.servers[" + i + "]");
             }
         }
     }
@@ -268,6 +313,18 @@ public class MqttProperties {
          * {@code 0} = 1024.
          */
         private int queueCapacity;
+
+        /**
+         * Maximum number of per-key ordered executors created for handlers
+         * declared with an {@code ordering} other than {@code NONE}.
+         *
+         * <p>The ordering key is derived from the topic of the incoming
+         * message, so a wildcard subscription such as {@code sensor/#} can
+         * produce an unbounded number of keys. This cap keeps the thread count
+         * bounded; keys beyond the cap share the async pool instead.
+         * Default: {@code 64}
+         */
+        private int maxOrderedExecutors = 64;
     }
 
     /**
@@ -287,10 +344,7 @@ public class MqttProperties {
                     throw new IllegalArgumentException(
                             "mqtt.single-server must be configured in SINGLE mode (server-uri and client-id are required)");
                 }
-                if (!singleServer.isValid()) {
-                    throw new IllegalArgumentException(
-                            "Invalid mqtt.single-server configuration: server-uri and client-id are required. " + singleServer);
-                }
+                singleServer.validate("mqtt.single-server");
             }
             case MULTI -> {
                 if (multiServer == null) {

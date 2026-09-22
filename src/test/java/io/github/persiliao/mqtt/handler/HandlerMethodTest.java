@@ -55,6 +55,21 @@ class HandlerMethodTest {
         public void handlePojo(String topic, Reading reading) {
             captured.put("pojo", reading);
         }
+
+        public void handlePrimitive(String topic, int value) {
+            captured.put("value", value);
+        }
+
+        /**
+         * Not a payload parameter: an injected collaborator. Jackson cannot
+         * bind a payload to an interface, so the method must be rejected.
+         */
+        public void handleCollaborator(String topic, Collaborator collaborator) {
+            captured.put("collaborator", collaborator);
+        }
+    }
+
+    public interface Collaborator {
     }
 
     private static Mqtt5Publish publish(String topic, String payload) {
@@ -62,6 +77,23 @@ class HandlerMethodTest {
                 .topic(topic)
                 .payload(payload.getBytes(StandardCharsets.UTF_8))
                 .build();
+    }
+
+    @Test
+    void emptyPayloadYieldsPrimitiveDefaultInsteadOfNull() throws Exception {
+        CapturingHandler handler = new CapturingHandler();
+        Method method = CapturingHandler.class.getMethod("handlePrimitive", String.class, int.class);
+
+        new HandlerMethod(method, true).invoke(handler, publish("a/b", ""), "server-1", new ObjectMapper());
+
+        assertThat(handler.captured).containsEntry("value", 0);
+    }
+
+    @Test
+    void interfaceParameterIsNotResolvable() throws Exception {
+        Method method = CapturingHandler.class.getMethod("handleCollaborator", String.class, Collaborator.class);
+
+        assertThat(HandlerMethod.isResolvable(method, true)).isFalse();
     }
 
     @Test

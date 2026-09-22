@@ -167,16 +167,6 @@ public @interface MqttMessageHandler {
     boolean autoDeserialize() default true;
 
     /**
-     * Declared content type of the payload.
-     *
-     * <p>Only used to decide how to deserialize: {@code application/json}
-     * triggers JSON deserialization for {@code Map}/POJO parameters.
-     *
-     * @return the expected content type
-     */
-    String contentType() default "application/json";
-
-    /**
      * Maximum accepted payload size in bytes. Messages larger than this are
      * dropped (and counted as failures in the statistics).
      *

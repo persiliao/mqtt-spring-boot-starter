@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
  *
  * @since 3.0.0
  */
-public class MqttSubscriptionManager implements DisposableBean {
+public class MqttSubscriptionManager implements MqttClientRegistry.ClientEventListener, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(MqttSubscriptionManager.class);
 
@@ -50,25 +50,36 @@ public class MqttSubscriptionManager implements DisposableBean {
     /**
      * Creates the subscription manager.
      *
-     * @param registry   the client registry (also becomes the listener target)
+     * <p>The manager is <em>not</em> attached to the registry by the
+     * constructor: {@link #attach()} must be called once the context is ready
+     * so that the wiring stays explicit and testable.
+     *
+     * @param registry   the client registry this manager listens to
      * @param dispatcher the message dispatcher wired into the subscription callbacks
      */
     public MqttSubscriptionManager(MqttClientRegistry registry, MqttMessageDispatcher dispatcher) {
         this.registry = registry;
         this.dispatcher = dispatcher;
-        registry.setClientEventListener(new MqttClientRegistry.ClientEventListener() {
-            @Override
-            public void onConnected(String serverId, Mqtt5AsyncClient client) {
-                subscribePending(serverId, client);
-            }
+    }
 
-            @Override
-            public void onDisconnected(String serverId, Mqtt5AsyncClient client) {
-                // Drop the "already subscribed" marks of this server so the
-                // next connection re-establishes the subscriptions.
-                activeSubscriptions.removeIf(key -> key.startsWith(serverId + "|"));
-            }
-        });
+    /**
+     * Attaches this manager to its registry so that it is notified of
+     * connect/disconnect events. Idempotent.
+     */
+    public void attach() {
+        registry.setClientEventListener(this);
+    }
+
+    @Override
+    public void onConnected(String serverId, Mqtt5AsyncClient client) {
+        subscribePending(serverId, client);
+    }
+
+    @Override
+    public void onDisconnected(String serverId, Mqtt5AsyncClient client) {
+        // Drop the "already subscribed" marks of this server so the next
+        // connection re-establishes the subscriptions.
+        activeSubscriptions.removeIf(key -> key.startsWith(serverId + "|"));
     }
 
     /**
@@ -162,6 +173,9 @@ public class MqttSubscriptionManager implements DisposableBean {
                     });
         } catch (Exception e) {
             // Synchronous failure (e.g. invalid topic filter) — retrying won't help.
+            // The mark must be removed, otherwise every later (re)connect would
+            // consider the topic "already subscribed" and silently skip it forever.
+            activeSubscriptions.remove(subscriptionKey(serverId, registration, topic));
             log.error("Failed to subscribe handler '{}' to topic '{}' on server {}: {}",
                     registration.getBeanName(), topic, serverId, e.toString());
         }

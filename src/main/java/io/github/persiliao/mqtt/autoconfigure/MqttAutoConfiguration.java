@@ -75,7 +75,11 @@ public class MqttAutoConfiguration {
     @ConditionalOnMissingBean
     public MqttSubscriptionManager mqttSubscriptionManager(MqttClientRegistry registry,
                                                            MqttMessageDispatcher dispatcher) {
-        return new MqttSubscriptionManager(registry, dispatcher);
+        MqttSubscriptionManager subscriptionManager = new MqttSubscriptionManager(registry, dispatcher);
+        // Explicit wiring: the manager only reacts to connect/disconnect
+        // events once it is attached to the registry.
+        subscriptionManager.attach();
+        return subscriptionManager;
     }
 
     /**
@@ -122,9 +126,10 @@ public class MqttAutoConfiguration {
             try {
                 clients.put(config.resolveId(), factory.create(config));
             } catch (Exception e) {
-                log.error("Failed to create MQTT client for server '{}'", config.getId(), e);
+                log.error("Failed to create MQTT client for server '{}'", config.resolveId(), e);
                 if (properties.getMultiServer().isFailFast()) {
-                    throw new IllegalStateException("Failed to create MQTT client for server: " + config.getId(), e);
+                    throw new IllegalStateException(
+                            "Failed to create MQTT client for server: " + config.resolveId(), e);
                 }
             }
         }
