@@ -130,9 +130,17 @@ public class MqttProperties {
 
         /**
          * MQTT 5 "clean start" flag.
-         * Default: {@code false}
+         * Default: {@code true}
+         *
+         * <p>Defaults to a clean start because a fresh client process cannot consume a
+         * resumed session: the broker immediately flushes QoS 1 messages queued in the
+         * previous session, but this process has not registered any publish handlers yet,
+         * so the client drops them (logging "No publish flow registered"). A clean start
+         * discards the stale session instead, making every startup deterministic.
+         * Set to {@code false} to keep the broker session across reconnects within one
+         * process (queued messages are then redelivered on automatic reconnect).
          */
-        private boolean cleanStart;
+        private boolean cleanStart = true;
 
         /**
          * Enables the client's built-in automatic reconnection with exponential

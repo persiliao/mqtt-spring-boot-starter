@@ -100,7 +100,7 @@ Prefix: `mqtt`
 | `username` / `password` | — | MQTT authentication credentials |
 | `keep-alive` | `60` | Keep-alive interval in seconds (0–65535) |
 | `session-expiry-interval` | `3600` | MQTT 5 session expiry in seconds (0–4294967295) |
-| `clean-start` | `false` | MQTT 5 clean start flag |
+| `clean-start` | `true` | MQTT 5 clean start flag. Defaults to `true` because a fresh process cannot consume a resumed session (queued QoS 1 messages would be dropped by the client); set `false` to keep the broker session across in-process reconnects |
 | `automatic-reconnect` | `true` | Client-level automatic reconnection with exponential backoff |
 | `initial-delay` | `1s` | Initial reconnection backoff delay (any Spring `Duration` format, e.g. `500ms`, `2s`); must not exceed `max-delay` |
 | `max-delay` | `30s` | Upper bound of the reconnection backoff |

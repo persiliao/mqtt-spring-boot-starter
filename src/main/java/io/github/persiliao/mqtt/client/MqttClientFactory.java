@@ -97,6 +97,24 @@ public class MqttClientFactory {
     }
 
     private void connect(Mqtt5AsyncClient client, MqttProperties.ServerConfig config, String serverId) {
+        client.connect(buildConnect(config)).whenComplete((connAck, error) -> {
+            if (error != null) {
+                log.error("MQTT client [{}] failed to connect to {} (serverId={}): {}",
+                        config.getClientId(), config.getServerUri(), serverId, error.toString());
+            } else {
+                log.info("MQTT client [{}] connected to {} (serverId={}, sessionPresent={})",
+                        config.getClientId(), config.getServerUri(), serverId, connAck.isSessionPresent());
+            }
+        });
+    }
+
+    /**
+     * Builds the CONNECT message for the given server configuration.
+     *
+     * @param config the server configuration
+     * @return the connect message
+     */
+    static Mqtt5Connect buildConnect(MqttProperties.ServerConfig config) {
         Mqtt5ConnectBuilder connectBuilder = Mqtt5Connect.builder()
                 .keepAlive(config.getKeepAlive())
                 .sessionExpiryInterval(config.getSessionExpiryInterval())
@@ -112,16 +130,7 @@ public class MqttClientFactory {
                     .password(config.getPassword().getBytes(StandardCharsets.UTF_8))
                     .build());
         }
-
-        client.connect(connectBuilder.build()).whenComplete((connAck, error) -> {
-            if (error != null) {
-                log.error("MQTT client [{}] failed to connect to {} (serverId={}): {}",
-                        config.getClientId(), config.getServerUri(), serverId, error.toString());
-            } else {
-                log.info("MQTT client [{}] connected to {} (serverId={}, sessionPresent={})",
-                        config.getClientId(), config.getServerUri(), serverId, connAck.isSessionPresent());
-            }
-        });
+        return connectBuilder.build();
     }
 
     /**

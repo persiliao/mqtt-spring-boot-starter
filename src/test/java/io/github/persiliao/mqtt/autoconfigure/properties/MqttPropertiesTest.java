@@ -21,6 +21,11 @@ class MqttPropertiesTest {
     }
 
     @Test
+    void cleanStartDefaultsToTrue() {
+        assertThat(new MqttProperties.ServerConfig().isCleanStart()).isTrue();
+    }
+
+    @Test
     void validSingleModePasses() {
         assertThatCode(() -> singleMode("tcp://localhost:1883", "client-a").validate())
                 .doesNotThrowAnyException();

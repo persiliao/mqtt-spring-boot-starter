@@ -100,7 +100,7 @@ public class TemperatureHandler {
 | `username` / `password` | — | MQTT 认证凭据 |
 | `keep-alive` | `60` | 心跳间隔（秒，0–65535） |
 | `session-expiry-interval` | `3600` | MQTT 5 会话过期时间（秒，0–4294967295） |
-| `clean-start` | `false` | MQTT 5 干净启动标志 |
+| `clean-start` | `true` | MQTT 5 干净启动标志。默认 `true`：进程重启后无法消费恢复的旧会话（排队的 QoS 1 消息会被客户端丢弃），设为 `false` 可在进程内重连时保留 broker 会话 |
 | `automatic-reconnect` | `true` | 客户端级自动重连（指数退避） |
 | `initial-delay` | `1s` | 重连初始退避时间（支持 Spring Duration 格式，如 `500ms`、`2s`），不得超过 `max-delay` |
 | `max-delay` | `30s` | 重连退避上限 |
