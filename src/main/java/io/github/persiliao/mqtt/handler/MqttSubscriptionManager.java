@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
  * on a shared scheduler.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public class MqttSubscriptionManager implements MqttClientRegistry.ClientEventListener, DisposableBean {
 

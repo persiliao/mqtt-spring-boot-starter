@@ -30,6 +30,7 @@ import java.util.Set;
  * keeping the starter free of any {@code jakarta.validation} dependency.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 @Getter
 @Setter

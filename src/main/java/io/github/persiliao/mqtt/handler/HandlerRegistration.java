@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * resolved handler methods and subscription metadata.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public final class HandlerRegistration {
 

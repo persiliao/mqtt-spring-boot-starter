@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
  * subscriptions can be (re)established.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public class MqttClientRegistry implements DisposableBean {
 

@@ -32,6 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * worker threads never block JVM exit.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public class MqttMessageDispatcher implements DisposableBean {
 

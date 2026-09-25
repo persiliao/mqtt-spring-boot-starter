@@ -46,6 +46,7 @@ import java.lang.annotation.Target;
  *
  * @see MqttMessageContext
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)

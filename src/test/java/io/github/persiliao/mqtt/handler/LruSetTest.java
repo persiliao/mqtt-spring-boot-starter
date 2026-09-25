@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Unit tests for the bounded {@link LruSet} used for duplicate detection.
+ *
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 class LruSetTest {
 

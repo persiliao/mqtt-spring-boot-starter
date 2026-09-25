@@ -10,6 +10,7 @@ package io.github.persiliao.mqtt;
  * counted as a failure and logged.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public class MqttMessageConversionException extends RuntimeException {
 

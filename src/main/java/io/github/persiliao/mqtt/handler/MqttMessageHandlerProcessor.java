@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * ordering race between handler beans and client beans.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public class MqttMessageHandlerProcessor implements ApplicationListener<ContextRefreshedEvent> {
 

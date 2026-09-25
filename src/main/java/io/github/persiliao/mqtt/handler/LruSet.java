@@ -14,6 +14,7 @@ import java.util.Set;
  * constant regardless of traffic volume.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 final class LruSet {
 

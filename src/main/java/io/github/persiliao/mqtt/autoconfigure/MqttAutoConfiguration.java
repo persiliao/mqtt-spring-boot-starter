@@ -30,6 +30,7 @@ import java.util.Map;
  * {@code mqtt.enabled} is not explicitly set to {@code false}.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 @AutoConfiguration
 @ConditionalOnClass(Mqtt5Client.class)

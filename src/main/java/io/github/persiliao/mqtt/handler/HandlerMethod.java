@@ -32,6 +32,7 @@ import java.util.Map;
  * </ul>
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 final class HandlerMethod {
 

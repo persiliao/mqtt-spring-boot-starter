@@ -8,6 +8,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
  * Unit tests for {@link MqttProperties#validate()}.
+ *
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 class MqttPropertiesTest {
 

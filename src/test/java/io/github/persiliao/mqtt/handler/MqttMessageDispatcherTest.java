@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * windows) from the topic of the <em>incoming</em> message. With a wildcard
  * subscription the number of distinct topics is unbounded, so both structures
  * must be bounded.
+ *
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 class MqttMessageDispatcherTest {
 

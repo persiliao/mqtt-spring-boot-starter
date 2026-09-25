@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
  * {@link MqttSubscriptionManager} until the client reports a connected state.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public class MqttClientFactory {
 

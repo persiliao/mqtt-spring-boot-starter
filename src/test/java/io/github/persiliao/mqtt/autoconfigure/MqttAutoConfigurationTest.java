@@ -24,6 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Note: the created clients try to connect to the configured (non-existent)
  * brokers asynchronously; those failures do not affect the application
  * context and are expected in these tests.
+ *
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 class MqttAutoConfigurationTest {
 

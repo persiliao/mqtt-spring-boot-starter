@@ -12,6 +12,8 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 
 /**
  * Unit tests for the URI handling of {@link MqttClientFactory}.
+ *
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 class MqttClientFactoryTest {
 

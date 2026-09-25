@@ -8,6 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Thread-safe processing counters for a single handler bean.
  *
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 final class HandlerStatistics {
 

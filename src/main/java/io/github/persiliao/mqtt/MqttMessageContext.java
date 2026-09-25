@@ -27,6 +27,7 @@ import java.nio.charset.StandardCharsets;
  * @param serverId the id of the server connection the message arrived on
  * @param message  the full MQTT 5 publish message
  * @since 3.0.0
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 public record MqttMessageContext(String topic, byte[] payload, String serverId, Mqtt5Publish message) {
 

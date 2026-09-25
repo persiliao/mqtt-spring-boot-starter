@@ -16,6 +16,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for the parameter resolution and invocation of {@link HandlerMethod}.
+ *
+ * @author Persi.Liao <xiangchu.liao@gmail.com>
  */
 class HandlerMethodTest {
 
